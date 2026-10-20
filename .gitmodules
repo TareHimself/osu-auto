@@ -1,0 +1,5 @@
+[submodule "lazer"]
+	path = lazer
+	url = https://github.com/TareHimself/osu-ml
+	branch = osu-auto
+	shallow = true

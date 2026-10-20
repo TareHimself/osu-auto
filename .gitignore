@@ -1,0 +1,14 @@
+data/*
+!data/jobs/
+bin/
+obj/
+.vs/
+*.user
+.venv/
+__pycache__/
+*.pyc
+.idea/
+headless/
+*.osz
+*.osk
+*.osr

@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="../lazer/osu.Game.Rulesets.Osu/osu.Game.Rulesets.Osu.csproj" />
+  <Project Path="../lazer/osu.Game/osu.Game.csproj" />
+  <Project Path="OsuAuto.Host/OsuAuto.Host.csproj" />
+</Solution>

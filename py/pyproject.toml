@@ -1,0 +1,36 @@
+[project]
+name = "osu-auto"
+version = "0.1.0"
+description = "osu! aim/click agent: training data, env client, deployment loop"
+readme = "README.md"
+authors = [
+    { name = "Oyintare Ebelo", email = "75279482+TareHimself@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "msgpack>=1.2.3",
+    "numpy>=2.5.4",
+    "opencv-python-headless>=5.0.0.93",
+    "pywin32>=312",
+    "pyzmq>=27.2.0",
+    "torch>=2.14.1",
+    "torchvision>=0.29.1",
+    "windows-capture>=2.0.1",
+]
+
+[project.scripts]
+osu-auto-plot = "osu_auto.plot_labels:main"
+
+[build-system]
+requires = ["uv_build>=0.9.12,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
