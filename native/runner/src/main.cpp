@@ -1,4 +1,5 @@
 #include <onnxruntime_cxx_api.h>
+#include <winrt/base.h>
 
 #include <algorithm>
 #include <chrono>
@@ -7,8 +8,15 @@
 #include <string>
 #include <vector>
 
+#include <fstream>
+#include <thread>
+
+#include "frame_ring.h"
 #include "npy.h"
 #include "post.h"
+#include "processor.h"
+#include "wgc_source.h"
+#include "window.h"
 
 namespace {
 
@@ -75,12 +83,83 @@ int verify(const std::string& model_path, const std::string& dir, bool cuda) {
     return key_mismatch == 0 && worst_aim < 1e-6 ? 0 : 1;
 }
 
+int shader_test(const std::string& dir) {
+    const Npy frame = load_npy(dir + "/frame.npy");
+    const Npy expected = load_npy(dir + "/expected.npy");
+    const Npy crop_npy = load_npy(dir + "/crop.npy");
+    const int32_t* c = crop_npy.as<int32_t>();
+    const Crop crop{c[0], c[1], c[2], c[3]};
+
+    const Device device = make_device();
+    GpuProcessor processor(device);
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = static_cast<UINT>(frame.shape[1]);
+    td.Height = static_cast<UINT>(frame.shape[0]);
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{frame.data.data(), td.Width * 4, 0};
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    if (FAILED(device.device->CreateTexture2D(&td, &init, &texture))) throw std::runtime_error("CreateTexture2D");
+
+    GrayFrame out;
+    processor.process(texture.Get(), crop, out);
+    const uint8_t* want = expected.as<uint8_t>();
+    int worst = 0;
+    double sum = 0;
+    int off_by_more_than_one = 0;
+    for (size_t i = 0; i < out.size(); ++i) {
+        const int d = std::abs(static_cast<int>(out[i]) - static_cast<int>(want[i]));
+        worst = std::max(worst, d);
+        sum += d;
+        off_by_more_than_one += d > 1;
+    }
+    std::printf("crop %d,%d %dx%d of %lldx%lld: mean abs diff %.4f, max %d, pixels off by more than 1: %d\n", crop.x, crop.y, crop.w, crop.h,
+                static_cast<long long>(frame.shape[1]), static_cast<long long>(frame.shape[0]), sum / static_cast<double>(out.size()), worst, off_by_more_than_one);
+    return 0;
+}
+
+int capture(const std::wstring& prefix, int seconds, const char* pgm_path) {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    const auto hwnd = find_window(prefix);
+    if (!hwnd) {
+        std::fprintf(stderr, "no window starting with the given title\n");
+        return 1;
+    }
+    const WindowGeometry g = window_geometry(*hwnd);
+    std::printf("client %dx%d, box %d,%d %dx%d\n", g.client_w, g.client_h, g.box.x, g.box.y, g.box.w, g.box.h);
+
+    FrameRing ring;
+    WgcSource source(*hwnd, ring);
+    uint64_t last = 0;
+    for (int i = 0; i < seconds; ++i) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        const uint64_t n = ring.count();
+        const auto frame = ring.latest();
+        std::printf("frames %llu (+%llu), capture %.0f fps, newest age %.1f ms\n", static_cast<unsigned long long>(n), static_cast<unsigned long long>(n - last), source.fps(),
+                    frame ? (now_seconds() - frame->t) * 1000.0 : -1.0);
+        last = n;
+    }
+    if (const auto frame = ring.latest(); frame && pgm_path) {
+        std::ofstream pgm(pgm_path, std::ios::binary);
+        pgm << "P5\n" << kFrameW << " " << kFrameH << "\n255\n";
+        pgm.write(reinterpret_cast<const char*>(frame->pixels.data()), static_cast<std::streamsize>(frame->pixels.size()));
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "verify") {
         return verify(argv[2], argv[3], argc < 5 || std::string(argv[4]) == "cuda");
     }
-    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n");
+    if (argc >= 3 && std::string(argv[1]) == "shader-test") return shader_test(argv[2]);
+    if (argc >= 4 && std::string(argv[1]) == "capture") {
+        return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
+    }
+    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n");
     return 2;
 }

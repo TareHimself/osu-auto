@@ -3,9 +3,10 @@ project(osu_auto_runner CXX)
 
 find_package(onnxruntime REQUIRED)
 
-add_executable(runner src/main.cpp)
+add_executable(runner src/main.cpp src/processor.cpp src/window.cpp src/wgc_source.cpp)
 target_compile_features(runner PRIVATE cxx_std_20)
-target_link_libraries(runner PRIVATE onnxruntime::onnxruntime)
+target_compile_definitions(runner PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(runner PRIVATE onnxruntime::onnxruntime d3d11 dxgi d3dcompiler dwmapi windowsapp)
 install(TARGETS runner RUNTIME DESTINATION bin)
 
 set(runtime_dlls $<TARGET_RUNTIME_DLLS:runner>)
