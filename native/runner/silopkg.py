@@ -11,6 +11,8 @@ class Runner(SiloPackage):
 
     def deps(self):
         self.dep("onnxruntime@1.31.0")
+        self.dep("cudnn@9.27.0")
+        self.dep("libcublas@13.8.0")
         self.tool("cmake@4.3")
 
     def generate(self):
