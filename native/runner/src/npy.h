@@ -1,8 +1,8 @@
 #pragma once
 
+#include <cctype>
 #include <cstdint>
 #include <fstream>
-#include <regex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -36,9 +36,14 @@ inline Npy load_npy(const std::string& path) {
     const auto open = header.find('(', header.find("'shape'"));
     const auto close = header.find(')', open);
     const std::string dims = header.substr(open + 1, close - open - 1);
-    const std::regex digits("\\d+");
-    for (std::sregex_iterator it(dims.begin(), dims.end(), digits), end; it != end; ++it) {
-        npy.shape.push_back(std::stoll(it->str()));
+    for (size_t i = 0; i < dims.size();) {
+        if (!std::isdigit(static_cast<unsigned char>(dims[i]))) {
+            ++i;
+            continue;
+        }
+        size_t used = 0;
+        npy.shape.push_back(std::stoll(dims.substr(i), &used));
+        i += used;
     }
     const auto begin = in.tellg();
     in.seekg(0, std::ios::end);
