@@ -14,15 +14,19 @@ constexpr int kFrameH = 120;
 
 using GrayFrame = std::array<uint8_t, kFrameW * kFrameH>;
 
-inline double now_seconds() {
+inline double qpc_to_seconds(int64_t ticks) {
     static const double inverse_freq = [] {
         LARGE_INTEGER f;
         QueryPerformanceFrequency(&f);
         return 1.0 / static_cast<double>(f.QuadPart);
     }();
+    return static_cast<double>(ticks) * inverse_freq;
+}
+
+inline double now_seconds() {
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
-    return static_cast<double>(c.QuadPart) * inverse_freq;
+    return qpc_to_seconds(c.QuadPart);
 }
 
 struct TimedFrame {

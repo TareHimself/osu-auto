@@ -95,17 +95,35 @@ GpuProcessor::GpuProcessor(const Device& device) : d_(device) {
     td.Usage = D3D11_USAGE_STAGING;
     td.BindFlags = 0;
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    check(d_.device->CreateTexture2D(&td, nullptr, &staging_), "CreateTexture2D staging");
+    for (auto& staging : staging_) check(d_.device->CreateTexture2D(&td, nullptr, &staging), "CreateTexture2D staging");
 }
 
-void GpuProcessor::process(ID3D11Texture2D* source, Crop crop, GrayFrame& out) {
+void GpuProcessor::process(ID3D11Texture2D* source, Crop crop, GrayFrame& out, DXGI_FORMAT view_format) {
+    read(dispatch(source, crop, view_format), out, true);
+}
+
+int GpuProcessor::dispatch(ID3D11Texture2D* source, Crop crop, DXGI_FORMAT view_format) {
     D3D11_TEXTURE2D_DESC sd;
     source->GetDesc(&sd);
+    D3D11_SHADER_RESOURCE_VIEW_DESC vd{};
+    vd.Format = view_format;
+    vd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    vd.Texture2D.MipLevels = 1;
     ComPtr<ID3D11ShaderResourceView> view;
-    check(d_.device->CreateShaderResourceView(source, nullptr, &view), "CreateShaderResourceView");
+    check(d_.device->CreateShaderResourceView(source, view_format == DXGI_FORMAT_UNKNOWN ? nullptr : &vd, &view), "CreateShaderResourceView");
 
     const Params p{{crop.x, crop.y}, {crop.w, crop.h}, {static_cast<int>(sd.Width), static_cast<int>(sd.Height)}, {0, 0}};
     d_.context->UpdateSubresource(params_.Get(), 0, nullptr, &p, 0, 0);
+
+    // The compute stage may belong to someone else when this runs inside another process's render loop, so put it back as found
+    ComPtr<ID3D11ComputeShader> old_shader;
+    ComPtr<ID3D11Buffer> old_buffer;
+    ComPtr<ID3D11ShaderResourceView> old_srv;
+    ComPtr<ID3D11UnorderedAccessView> old_uav;
+    d_.context->CSGetShader(&old_shader, nullptr, nullptr);
+    d_.context->CSGetConstantBuffers(0, 1, &old_buffer);
+    d_.context->CSGetShaderResources(0, 1, &old_srv);
+    d_.context->CSGetUnorderedAccessViews(0, 1, &old_uav);
 
     ID3D11Buffer* cb = params_.Get();
     ID3D11ShaderResourceView* srv = view.Get();
@@ -116,16 +134,28 @@ void GpuProcessor::process(ID3D11Texture2D* source, Crop crop, GrayFrame& out) {
     d_.context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
     d_.context->Dispatch((kFrameW + 15) / 16, (kFrameH + 7) / 8, 1);
 
-    ID3D11ShaderResourceView* no_srv = nullptr;
-    ID3D11UnorderedAccessView* no_uav = nullptr;
-    d_.context->CSSetShaderResources(0, 1, &no_srv);
-    d_.context->CSSetUnorderedAccessViews(0, 1, &no_uav, nullptr);
+    ID3D11Buffer* prev_cb = old_buffer.Get();
+    ID3D11ShaderResourceView* prev_srv = old_srv.Get();
+    ID3D11UnorderedAccessView* prev_uav = old_uav.Get();
+    d_.context->CSSetShaderResources(0, 1, &prev_srv);
+    d_.context->CSSetUnorderedAccessViews(0, 1, &prev_uav, nullptr);
+    d_.context->CSSetConstantBuffers(0, 1, &prev_cb);
+    d_.context->CSSetShader(old_shader.Get(), nullptr, 0);
 
-    d_.context->CopyResource(staging_.Get(), output_.Get());
+    const int slot = next_slot_;
+    next_slot_ = (next_slot_ + 1) % kSlots;
+    d_.context->CopyResource(staging_[slot].Get(), output_.Get());
+    return slot;
+}
+
+bool GpuProcessor::read(int slot, GrayFrame& out, bool wait) {
     D3D11_MAPPED_SUBRESOURCE m;
-    check(d_.context->Map(staging_.Get(), 0, D3D11_MAP_READ, 0, &m), "Map");
+    const HRESULT hr = d_.context->Map(staging_[slot].Get(), 0, D3D11_MAP_READ, wait ? 0 : D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+    if (hr == DXGI_ERROR_WAS_STILL_DRAWING) return false;
+    check(hr, "Map");
     for (int row = 0; row < kFrameH; ++row) {
         std::memcpy(out.data() + row * kFrameW, static_cast<const uint8_t*>(m.pData) + row * m.RowPitch, kFrameW);
     }
-    d_.context->Unmap(staging_.Get(), 0);
+    d_.context->Unmap(staging_[slot].Get(), 0);
+    return true;
 }

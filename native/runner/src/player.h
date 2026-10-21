@@ -11,6 +11,7 @@ struct PlayOptions {
     std::wstring window_prefix = L"osu!";
     bool inject = true;
     bool cuda = true;
+    bool hook = false;
     double smooth_cutoff = 2.0;
     double smooth_beta = 0.05;
     double smooth_dcut = 10.0;

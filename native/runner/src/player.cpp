@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "frame_ring.h"
+#include "frame_source.h"
+#include "hook_source.h"
 #include "input.h"
 #include "meta.h"
 #include "model.h"
@@ -92,7 +94,7 @@ struct Player::Impl {
     ModelMeta meta;
     std::vector<int> steps;
     FrameRing ring;
-    std::unique_ptr<WgcSource> source;
+    std::unique_ptr<FrameSource> source;
     std::unique_ptr<Model> model;
     Injector injector;
     std::array<uint16_t, 2> scans;
@@ -125,7 +127,11 @@ struct Player::Impl {
 
         SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
         model = std::make_unique<Model>(options.model, meta, options.cuda);
-        source = std::make_unique<WgcSource>(hwnd, ring);
+        if (options.hook) {
+            source = std::make_unique<HookSource>(hwnd, ring);
+        } else {
+            source = std::make_unique<WgcSource>(hwnd, ring);
+        }
 
         char title[256]{};
         GetWindowTextA(hwnd, title, sizeof(title));

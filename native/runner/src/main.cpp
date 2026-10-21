@@ -12,6 +12,9 @@
 #include <thread>
 
 #include "frame_ring.h"
+#include "frame_source.h"
+#include "hook_inject.h"
+#include "hook_source.h"
 #include "npy.h"
 #include "player.h"
 #include "post.h"
@@ -122,7 +125,22 @@ int shader_test(const std::string& dir) {
     return 0;
 }
 
-int capture(const std::wstring& prefix, int seconds, const char* pgm_path) {
+int hook_command(const std::string& action, const std::wstring& prefix) {
+    const auto hwnd = find_window(prefix);
+    if (!hwnd) {
+        std::fprintf(stderr, "no window starting with the given title\n");
+        return 1;
+    }
+    const std::string error = action == "inject" ? inject_hook(*hwnd) : eject_hook(*hwnd);
+    if (!error.empty()) {
+        std::fprintf(stderr, "%s failed: %s\n", action.c_str(), error.c_str());
+        return 1;
+    }
+    std::printf("%s ok\n", action.c_str());
+    return 0;
+}
+
+int capture(const std::wstring& prefix, int seconds, const char* pgm_path, bool hook = false) {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     const auto hwnd = find_window(prefix);
     if (!hwnd) {
@@ -133,13 +151,18 @@ int capture(const std::wstring& prefix, int seconds, const char* pgm_path) {
     std::printf("client %dx%d, box %d,%d %dx%d\n", g.client_w, g.client_h, g.box.x, g.box.y, g.box.w, g.box.h);
 
     FrameRing ring;
-    WgcSource source(*hwnd, ring);
+    std::unique_ptr<FrameSource> source;
+    if (hook) {
+        source = std::make_unique<HookSource>(*hwnd, ring);
+    } else {
+        source = std::make_unique<WgcSource>(*hwnd, ring);
+    }
     uint64_t last = 0;
     for (int i = 0; i < seconds; ++i) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         const uint64_t n = ring.count();
         const auto frame = ring.latest();
-        std::printf("frames %llu (+%llu), capture %.0f fps, newest age %.1f ms\n", static_cast<unsigned long long>(n), static_cast<unsigned long long>(n - last), source.fps(),
+        std::printf("frames %llu (+%llu), capture %.0f fps, newest age %.1f ms\n", static_cast<unsigned long long>(n), static_cast<unsigned long long>(n - last), source->fps(),
                     frame ? (now_seconds() - frame->t) * 1000.0 : -1.0);
         last = n;
     }
@@ -165,6 +188,8 @@ int play(int argc, char** argv) {
             options.inject = false;
         } else if (a == "--start-now") {
             start_now = true;
+        } else if (a == "--capture" && has_value) {
+            options.hook = std::string(argv[++i]) == "hook";
         } else if (a == "--cpu") {
             options.cuda = false;
         } else if (a == "--window" && has_value) {
@@ -232,6 +257,13 @@ int main(int argc, char** argv) {
     }
     if (argc >= 3 && std::string(argv[1]) == "play") return play(argc, argv);
     if (argc >= 3 && std::string(argv[1]) == "shader-test") return shader_test(argv[2]);
+    if (argc >= 3 && std::string(argv[1]) == "hook") {
+        const std::string prefix = argc > 3 ? argv[3] : "osu!";
+        return hook_command(argv[2], std::wstring(prefix.begin(), prefix.end()));
+    }
+    if (argc >= 4 && std::string(argv[1]) == "hook-capture") {
+        return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr, true);
+    }
     if (argc >= 4 && std::string(argv[1]) == "capture") {
         return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
     }
