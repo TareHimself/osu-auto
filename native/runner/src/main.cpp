@@ -252,6 +252,16 @@ int play(int argc, char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Where ONNX Runtime's CUDA provider finds cuDNN and cuBLAS, for when PATH is not the place
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--cuda-dlls") {
+            const std::string dir = argv[i + 1];
+            SetDllDirectoryW(std::wstring(dir.begin(), dir.end()).c_str());
+            for (int j = i; j + 2 < argc; ++j) argv[j] = argv[j + 2];
+            argc -= 2;
+            break;
+        }
+    }
     if (argc >= 4 && std::string(argv[1]) == "verify") {
         return verify(argv[2], argv[3], argc < 5 || std::string(argv[4]) == "cuda");
     }
@@ -267,6 +277,6 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "capture") {
         return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
     }
-    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play <model.onnx> [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n");
+    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play <model.onnx> [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n       any command: [--cuda-dlls DIR] where cuDNN and cuBLAS are\n");
     return 2;
 }
