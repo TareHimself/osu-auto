@@ -1,4 +1,4 @@
-# Native runner
+# Play
 
 Plays osu!lazer with a trained model at 100 Hz, with no Python in the loop. It captures the game window, runs the ONNX model, smooths the aim, moves the cursor and presses Z/X. It does the same job as `py/src/osu_auto/play.py`, with steadier timing.
 
@@ -7,7 +7,7 @@ Windows only, x64, an NVIDIA GPU for CUDA (or `--cpu`), lazer in windowed or bor
 ## One time setup
 
 ```
-uv run --project native/runner silo profile detect     # once per machine, finds MSVC
+uv run --project play/shell silo profile detect     # once per machine, finds MSVC
 ```
 
 Export the model you want to run (from `py/`, this writes `joint_best.onnx`, `joint_best.onnx.data` and `joint_best.json` next to the checkpoint):
@@ -24,7 +24,7 @@ PYTHONUTF8=1 uv run python -m osu_auto.export_onnx ../data/models/joint_v3_spin3
 From the repo root:
 
 ```
-uv run --project native/runner silo run -C native/shell runner play data/models/joint_v3_spin3/joint_best.onnx
+uv run --project play/shell silo run -C play/shell runner play data/models/joint_v3_spin3/joint_best.onnx
 ```
 
 The first run builds the runner and downloads onnxruntime, cuDNN and cuBLAS (about 2 GB, cached by silo). Later runs start straight away.
@@ -68,9 +68,9 @@ Tick gap p99 should stay near 10 ms. Anything much larger means something else o
 By default frames come from Windows capture. The hook copies each frame straight out of lazer's own `Present` call instead, which roughly halves frame age (about 2 ms against 4 ms). It loads a small DLL into the lazer process, like OBS game capture, and only reads pixels.
 
 ```
-uv run --project native/runner silo run -C native/shell runner hook inject
-uv run --project native/runner silo run -C native/shell runner play <model.onnx> --capture hook
-uv run --project native/runner silo run -C native/shell runner hook eject
+uv run --project play/shell silo run -C play/shell runner hook inject
+uv run --project play/shell silo run -C play/shell runner play <model.onnx> --capture hook
+uv run --project play/shell silo run -C play/shell runner hook eject
 ```
 
 - Inject before starting the runner, eject when you are done. Closing lazer also removes it.
@@ -97,14 +97,7 @@ python -m osu_auto.play --dump-frames <dir> ...       # record a live session in
 
 ## Developing
 
-```
-cd native/runner
-uv run silo sync .
-uv run silo run -C . -- cmake --preset runner-release
-uv run silo run -C . -- cmake --build --preset runner-release
-```
-
-The build output is `build/release/runner.exe` with `capture_hook.dll` and every runtime DLL beside it. `uv run silo build .` puts the same set in silo's store.
+The code, recipes and build notes are in `runner/`, see its README. `shell/` is only the project you run it from.
 
 ## Troubleshooting
 
