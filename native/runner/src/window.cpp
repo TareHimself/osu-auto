@@ -59,3 +59,12 @@ WindowGeometry window_geometry(HWND hwnd) {
     const int w = client.right - client.left, h = client.bottom - client.top;
     return {w, h, origin.x, origin.y, capture_box(w, h, origin.x - bounds.left, origin.y - bounds.top)};
 }
+
+std::pair<double, double> playfield_to_screen(const WindowGeometry& g, double px, double py) {
+    constexpr double kPlayfieldW = 512.0, kPlayfieldH = 384.0, kSizeAdjust = 0.8, kStoryboardShift = 8.0;
+    const double box_w = std::min<double>(g.client_w, g.client_h * 4.0 / 3.0);
+    const double scale = kSizeAdjust * box_w / kPlayfieldW;
+    const double pf_x = g.client_w / 2.0 - kPlayfieldW * scale / 2;
+    const double pf_y = g.client_h / 2.0 + kStoryboardShift * scale - kPlayfieldH * scale / 2;
+    return {g.client_x + pf_x + px * scale, g.client_y + pf_y + py * scale};
+}

@@ -13,6 +13,7 @@
 
 #include "frame_ring.h"
 #include "npy.h"
+#include "player.h"
 #include "post.h"
 #include "processor.h"
 #include "wgc_source.h"
@@ -150,16 +151,89 @@ int capture(const std::wstring& prefix, int seconds, const char* pgm_path) {
     return 0;
 }
 
+
+int play(int argc, char** argv) {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    PlayOptions options;
+    options.model = argv[2];
+    int duration = 0;
+    for (int i = 3; i < argc; ++i) {
+        const std::string a = argv[i];
+        const bool has_value = i + 1 < argc;
+        if (a == "--no-inject") {
+            options.inject = false;
+        } else if (a == "--cpu") {
+            options.cuda = false;
+        } else if (a == "--window" && has_value) {
+            const std::string v = argv[++i];
+            options.window_prefix.assign(v.begin(), v.end());
+        } else if (a == "--duration" && has_value) {
+            duration = std::atoi(argv[++i]);
+        } else if (a == "--latency-extra" && has_value) {
+            options.latency_extra_ms = std::atof(argv[++i]);
+        } else if (a == "--smooth-cutoff" && has_value) {
+            options.smooth_cutoff = std::atof(argv[++i]);
+        } else if (a == "--smooth-beta" && has_value) {
+            options.smooth_beta = std::atof(argv[++i]);
+        } else if (a == "--smooth-dcut" && has_value) {
+            options.smooth_dcut = std::atof(argv[++i]);
+        } else if (a == "--keys" && has_value) {
+            options.keys = argv[++i];
+        } else if (a == "--log-dir" && has_value) {
+            options.log_dir = argv[++i];
+        } else {
+            std::fprintf(stderr, "unknown option %s\n", a.c_str());
+            return 2;
+        }
+    }
+    const auto hwnd = find_window(options.window_prefix);
+    if (!hwnd) {
+        std::fprintf(stderr, "no window starting with the given title\n");
+        return 1;
+    }
+    Player player(*hwnd, options);
+    constexpr int kToggle = 1, kStop = 2;
+    RegisterHotKey(nullptr, kToggle, MOD_NOREPEAT, VK_F8);
+    RegisterHotKey(nullptr, kStop, MOD_NOREPEAT, VK_F9);
+    SetTimer(nullptr, 1, 1000, nullptr);
+    if (duration > 0) {
+        player.start();
+    } else {
+        std::printf("F8 starts and stops the agent, F9 quits\n");
+    }
+
+    int elapsed = 0;
+    MSG msg;
+    while (GetMessage(&msg, nullptr, 0, 0) > 0) {
+        if (msg.message == WM_HOTKEY && msg.wParam == kToggle) {
+            player.toggle();
+            std::printf("agent %s\n", player.active() ? "on" : "off");
+        } else if (msg.message == WM_HOTKEY && msg.wParam == kStop) {
+            break;
+        } else if (msg.message == WM_TIMER) {
+            if (player.active()) {
+                const PlayStats s = player.stats();
+                std::printf("capture %.0f fps | frame age %.1f ms | loop %.2f ms | ticks %lld | presses %lld | stall max tick %.0f frame %.0f infer %.0f ms\n", s.capture_fps,
+                            s.frame_age_ms, s.loop_ms, s.ticks, s.presses, s.tick_gap_max_ms, s.frame_age_max_ms, s.infer_max_ms);
+            }
+            if (duration > 0 && ++elapsed >= duration) break;
+        }
+    }
+    player.stop();
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "verify") {
         return verify(argv[2], argv[3], argc < 5 || std::string(argv[4]) == "cuda");
     }
+    if (argc >= 3 && std::string(argv[1]) == "play") return play(argc, argv);
     if (argc >= 3 && std::string(argv[1]) == "shader-test") return shader_test(argv[2]);
     if (argc >= 4 && std::string(argv[1]) == "capture") {
         return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
     }
-    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n");
+    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play <model.onnx> [--window P] [--no-inject] [--cpu] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n");
     return 2;
 }

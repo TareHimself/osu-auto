@@ -77,6 +77,8 @@ public:
         return {down_ && key_ == 0, down_ && key_ == 1};
     }
 
+    bool down() const { return down_; }
+    int key() const { return key_; }
     bool pressed() const { return pressed_; }
 
 private:

@@ -8,6 +8,7 @@
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 
 #include <atomic>
+#include <mutex>
 
 #include "processor.h"
 #include "window.h"
@@ -34,6 +35,7 @@ struct WgcSource::Impl {
     wgc::GraphicsCaptureSession session{nullptr};
     winrt::event_token token{};
     WindowGeometry geometry{};
+    mutable std::mutex geometry_mutex;
     GrayFrame scratch{};
     int frames = 0;
     double last_t = 0.0;
@@ -98,6 +100,7 @@ struct WgcSource::Impl {
         if (++frames % kGeometryEvery == 0) {
             fps = kGeometryEvery / (t - fps_t0);
             fps_t0 = t;
+            std::lock_guard lock(geometry_mutex);
             geometry = window_geometry(hwnd);
         }
     }
@@ -106,3 +109,8 @@ struct WgcSource::Impl {
 WgcSource::WgcSource(HWND hwnd, FrameRing& ring) : impl_(std::make_unique<Impl>(hwnd, ring)) {}
 WgcSource::~WgcSource() = default;
 double WgcSource::fps() const { return impl_->fps; }
+
+WindowGeometry WgcSource::geometry() const {
+    std::lock_guard lock(impl_->geometry_mutex);
+    return impl_->geometry;
+}
