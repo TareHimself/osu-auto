@@ -23,6 +23,7 @@ struct PlayStats {
     double capture_fps = 0, loop_ms = 0, frame_age_ms = 0, latency_ms = 0;
     double tick_gap_max_ms = 0, frame_age_max_ms = 0, infer_max_ms = 0;
     long long presses = 0, ticks = 0;
+    bool focused = true;
 };
 
 // Runs the model against one window at 100 Hz: capture, infer, smooth, move the cursor, press keys

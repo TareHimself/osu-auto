@@ -157,11 +157,14 @@ int play(int argc, char** argv) {
     PlayOptions options;
     options.model = argv[2];
     int duration = 0;
+    bool start_now = false;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         const bool has_value = i + 1 < argc;
         if (a == "--no-inject") {
             options.inject = false;
+        } else if (a == "--start-now") {
+            start_now = true;
         } else if (a == "--cpu") {
             options.cuda = false;
         } else if (a == "--window" && has_value) {
@@ -196,11 +199,8 @@ int play(int argc, char** argv) {
     RegisterHotKey(nullptr, kToggle, MOD_NOREPEAT, VK_F8);
     RegisterHotKey(nullptr, kStop, MOD_NOREPEAT, VK_F9);
     SetTimer(nullptr, 1, 1000, nullptr);
-    if (duration > 0) {
-        player.start();
-    } else {
-        std::printf("F8 starts and stops the agent, F9 quits\n");
-    }
+    std::printf("F8 starts and stops the agent, F9 quits. Input is only sent while the game window is focused.\n");
+    if (start_now) player.start();
 
     int elapsed = 0;
     MSG msg;
@@ -216,7 +216,8 @@ int play(int argc, char** argv) {
                 std::printf("capture %.0f fps | frame age %.1f ms | loop %.2f ms | ticks %lld | presses %lld | stall max tick %.0f frame %.0f infer %.0f ms\n", s.capture_fps,
                             s.frame_age_ms, s.loop_ms, s.ticks, s.presses, s.tick_gap_max_ms, s.frame_age_max_ms, s.infer_max_ms);
             }
-            if (duration > 0 && ++elapsed >= duration) break;
+            if (player.active() && !player.stats().focused && options.inject) std::printf("game window not focused, input paused\n");
+            if (duration > 0 && player.active() && ++elapsed >= duration) break;
         }
     }
     player.stop();
@@ -234,6 +235,6 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "capture") {
         return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
     }
-    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play <model.onnx> [--window P] [--no-inject] [--cpu] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n");
+    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play <model.onnx> [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n");
     return 2;
 }

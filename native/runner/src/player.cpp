@@ -110,6 +110,7 @@ struct Player::Impl {
     std::string trace_path;
     std::vector<double> trace;
     double last_infer_ms = 1.0;
+    int held_key = -1;
 
     Impl(HWND hwnd_, const PlayOptions& o)
         : options(o), hwnd(hwnd_), smooth(kPeriod, o.smooth_cutoff, o.smooth_beta, o.smooth_dcut), keys(2, 0.5, 1.0) {
@@ -171,10 +172,7 @@ struct Player::Impl {
     void stop() {
         if (!active.exchange(false)) return;
         std::lock_guard lock(tick_mutex);
-        if (options.inject) {
-            injector.key(scans[0], false);
-            injector.key(scans[1], false);
-        }
+        release_held();
         long long presses, ticks;
         {
             std::lock_guard stats_lock(stats_mutex);
@@ -191,10 +189,9 @@ struct Player::Impl {
         }
     }
 
-    void apply_keys(bool was_down, int was_key, bool down, int key) {
-        if (was_down == down && was_key == key) return;
-        if (was_down && (!down || key != was_key)) injector.key(scans[was_key], false);
-        if (down && (!was_down || key != was_key)) injector.key(scans[key], true);
+    void release_held() {
+        if (held_key >= 0) injector.key(scans[held_key], false);
+        held_key = -1;
     }
 
     void run() {
@@ -285,12 +282,16 @@ struct Player::Impl {
         const double p_press = 1.0 / (1.0 + std::exp(-o.press_logit)), p_down = 1.0 / (1.0 + std::exp(-o.down_logit));
         const auto [px, py] = smooth(decode_to_playfield(o.x, o.y));
         const auto [sx, sy] = playfield_to_screen(source->geometry(), px, py);
-        const bool was_down = keys.down();
-        const int was_key = keys.key();
         const Keys k = keys.apply(p_press, p_down);
+        const bool focused = GetForegroundWindow() == hwnd;
         if (options.inject) {
-            injector.move(sx, sy);
-            apply_keys(was_down, was_key, keys.down(), keys.key());
+            if (focused) injector.move(sx, sy);
+            const int want = focused && keys.down() ? keys.key() : -1;
+            if (want != held_key) {
+                release_held();
+                if (want >= 0) injector.key(scans[want], true);
+                held_key = want;
+            }
         }
 
         age_max = std::max(age_max, *age * 1000);
@@ -303,6 +304,7 @@ struct Player::Impl {
             stats.presses += keys.pressed();
             stats.frame_age_ms = *age * 1000;
             stats.latency_ms = latency_ms;
+            stats.focused = focused;
         }
         const double row[kTraceColumns] = {t_start, px, py, p_press, p_down, static_cast<double>(k.k1), static_cast<double>(k.k2), *age * 1000, infer_ms};
         trace.insert(trace.end(), row, row + kTraceColumns);
