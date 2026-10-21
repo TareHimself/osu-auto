@@ -1,0 +1,11 @@
+[project]
+name = "osu-auto-runner"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["silo"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+silo = { git = "https://github.com/TareHimself/silo", subdirectory = "client" }

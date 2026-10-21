@@ -1,0 +1,7 @@
+[[registry]]
+name = "local"
+path = "."
+
+[[registry]]
+name = "silo-recipes"
+git = "https://github.com/TareHimself/silo-recipes"
