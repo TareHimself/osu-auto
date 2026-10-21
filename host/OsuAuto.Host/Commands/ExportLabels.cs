@@ -1,8 +1,13 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using osu.Game.Beatmaps;
 using osu.Game.Replays;
+using osu.Game.Rulesets;
+using osu.Game.Rulesets.Difficulty.Skills;
 using osu.Game.Rulesets.Mods;
+using osu.Game.Rulesets.Osu.Difficulty;
+using osu.Game.Utils;
 using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Osu;
 using osu.Game.Rulesets.Osu.Objects;
@@ -20,12 +25,14 @@ public static class ExportLabels
     public static async Task Execute(AutoHostGame game, CliOptions options)
     {
         string path = options.Positional.FirstOrDefault() ?? throw new ArgumentException("beatmap path required");
-        string outRoot = options.Require("out");
-        string? osrPath = options.Get("osr");
-        var modSpecs = ModSpec.Split(options.Get("mods"));
+        string outDir = await Run(game, path, options.Get("diff"), options.Get("osr"), ModSpec.Split(options.Get("mods")), options.Require("out")).ConfigureAwait(false);
+        Console.WriteLine($"exported -> {outDir}");
+    }
 
+    public static async Task<string> Run(AutoHostGame game, string path, string? diff, string? osrPath, IReadOnlyList<string> modSpecs, string outRoot)
+    {
         var ruleset = new OsuRuleset();
-        var info = await game.ImportBeatmap(path, options.Get("diff")).ConfigureAwait(false);
+        var info = await game.ImportBeatmap(path, diff).ConfigureAwait(false);
 
         IReadOnlyList<Mod> mods;
         Replay replay;
@@ -60,6 +67,7 @@ public static class ExportLabels
         double t1 = Math.Max(objects[^1].GetEndTime(), replay.Frames.Max(f => f.Time));
 
         var samples = ReplaySampler.Sample(replay, t0, t1, step_ms);
+        var strains = calculateStrains(ruleset, working, mods, objects);
 
         string outDir = Path.Combine(outRoot, $"{info.MD5Hash}-{source}");
         Directory.CreateDirectory(outDir);
@@ -86,11 +94,55 @@ public static class ExportLabels
             samples = samples.Count,
             objects = objects.Count,
             replay_frames = replay.Frames.Count,
+            strains,
         };
 
-        await File.WriteAllTextAsync(Path.Combine(outDir, "meta.json"), JsonSerializer.Serialize(meta, new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+        string metaPath = Path.Combine(outDir, "meta.json");
+        var node = JsonSerializer.SerializeToNode(meta)!.AsObject();
 
-        Console.WriteLine($"exported {samples.Count} samples, {objects.Count} objects -> {outDir}");
+        if (File.Exists(metaPath) && JsonNode.Parse(await File.ReadAllTextAsync(metaPath).ConfigureAwait(false)) is JsonObject old && old["frames"] is JsonNode frames)
+            node["frames"] = frames.DeepClone();
+
+        await File.WriteAllTextAsync(metaPath, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+        return outDir;
+    }
+
+    private sealed class StrainCalculator : OsuDifficultyCalculator
+    {
+        public Skill[] Skills = Array.Empty<Skill>();
+
+        public StrainCalculator(IRulesetInfo ruleset, IWorkingBeatmap beatmap)
+            : base(ruleset, beatmap)
+        {
+        }
+
+        protected override Skill[] CreateSkills(IBeatmap beatmap, Mod[] mods) => Skills = base.CreateSkills(beatmap, mods);
+    }
+
+    /// <summary>
+    /// Per hit object difficulty of each star rating skill. Entry i belongs to objects[i + object_offset], in rate-adjusted time.
+    /// </summary>
+    private static object calculateStrains(OsuRuleset ruleset, WorkingBeatmap working, IReadOnlyList<Mod> mods, List<OsuHitObject> objects)
+    {
+        var calc = new StrainCalculator(ruleset.RulesetInfo, working);
+        var attributes = calc.Calculate(mods);
+        var byName = new Dictionary<string, IReadOnlyList<double>>();
+
+        foreach (var skill in calc.Skills)
+        {
+            string name = skill.GetType().Name.ToLowerInvariant();
+            if (byName.ContainsKey(name))
+                name += "_no_sliders";
+            byName[name] = skill.GetObjectDifficulties();
+        }
+
+        return new
+        {
+            star_rating = attributes.StarRating,
+            clock_rate = ModUtils.CalculateRateWithMods(mods),
+            object_offset = objects.Count - (byName.Count > 0 ? byName.Values.First().Count : objects.Count),
+            per_object = byName,
+        };
     }
 
     private static void writeLabels(string path, List<LabelSample> samples)

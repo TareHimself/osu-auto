@@ -1,9 +1,9 @@
 [
-  {"map": "F:/osu-auto/data/beatmaps/inochi-no-yukue.osz", "diff": "EX"},
-  {"map": "F:/osu-auto/data/beatmaps/renatus.osz", "diff": "Insane"},
-  {"map": "F:/osu-auto/data/beatmaps/renatus.osz", "diff": "Hard"},
-  {"map": "F:/osu-auto/data/beatmaps/inochi-no-yukue.osz", "diff": "EX", "mods": ["HD"]},
-  {"map": "F:/osu-auto/data/beatmaps/renatus.osz", "diff": "Insane", "mods": ["HD"]},
-  {"map": "F:/osu-auto/data/beatmaps/renatus.osz", "diff": "Hard", "mods": ["HD"]},
-  {"map": "F:/osu-auto/data/beatmaps/inochi-no-yukue.osz", "diff": "EX", "mods": ["DA:circle_size=4,approach_rate=9"]}
+  {"map": "inochi-no-yukue.osz", "diff": "EX"},
+  {"map": "renatus.osz", "diff": "Insane"},
+  {"map": "renatus.osz", "diff": "Hard"},
+  {"map": "inochi-no-yukue.osz", "diff": "EX", "mods": ["HD"]},
+  {"map": "renatus.osz", "diff": "Insane", "mods": ["HD"]},
+  {"map": "renatus.osz", "diff": "Hard", "mods": ["HD"]},
+  {"map": "inochi-no-yukue.osz", "diff": "EX", "mods": ["DA:circle_size=4,approach_rate=9"]}
 ]

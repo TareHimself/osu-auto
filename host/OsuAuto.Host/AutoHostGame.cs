@@ -258,13 +258,39 @@ public partial class AutoHostGame : OsuGameBase
 
     protected override UserInputManager CreateUserInputManager() => SyntheticInput = new SyntheticInputManager();
 
+    public Task<T> OnDrawThread<T>(Func<T> func)
+    {
+        var tcs = new TaskCompletionSource<T>();
+
+        Host.DrawThread.Scheduler.Add(() =>
+        {
+            try
+            {
+                tcs.SetResult(func());
+            }
+            catch (Exception e)
+            {
+                tcs.SetException(e);
+            }
+        });
+
+        return tcs.Task;
+    }
+
+    /// <summary>
+    /// Waits until the renderer has drawn <paramref name="frames"/> frames that can include the current update state.
+    /// The draw thread skips rendering when no new draw tree is ready, so scheduler ticks alone do not count.
+    /// </summary>
     public async Task WaitForDraws(int frames)
     {
-        for (int i = 0; i < frames; i++)
+        await OnUpdateThread(() => true).ConfigureAwait(false);
+        ulong start = await OnDrawThread(() => Host.Renderer.FrameIndex).ConfigureAwait(false);
+        int polls = 0;
+
+        while (await OnDrawThread(() => Host.Renderer.FrameIndex).ConfigureAwait(false) < start + (ulong)frames)
         {
-            var tcs = new TaskCompletionSource<bool>();
-            Host.DrawThread.Scheduler.Add(() => tcs.TrySetResult(true));
-            await tcs.Task.ConfigureAwait(false);
+            if (++polls > 1_000_000)
+                throw new TimeoutException("draw thread stopped rendering");
         }
     }
 }

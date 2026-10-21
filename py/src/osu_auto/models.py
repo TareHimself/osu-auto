@@ -11,12 +11,19 @@ class ConvBlock(nn.Sequential):
         )
 
 
-class AimNet(nn.Module):
-    """Small conv net: K stacked grayscale frames + last key state -> (x, y) in [0, 1] capture-box coordinates."""
+class FrameNet(nn.Module):
+    """Small conv net: K stacked grayscale frames + the agent's last key state -> `outputs` values.
 
-    def __init__(self, stack: int = 4, width: int = 32):
+    Aim: outputs are (x, y) in [0, 1] capture-box coordinates. Click: outputs are logits (press, hold).
+    """
+
+    def __init__(self, stack: int = 4, width: int = 32, outputs: int = 2, heads: list[int] | None = None, bounded_aim: bool = False):
+        """`heads`: output sizes of separate MLP heads on the shared trunk (e.g. [2, 2] for aim and click); None = one head.
+        `bounded_aim`: sigmoid on the first two outputs, for playfield-normalised aim targets."""
         super().__init__()
         self.stack = stack
+        self.bounded_aim = bounded_aim
+        self.head_sizes = list(heads) if heads else None
         self.features = nn.Sequential(
             ConvBlock(stack, width, 2),
             ConvBlock(width, width, 1),
@@ -29,13 +36,21 @@ class AimNet(nn.Module):
             nn.Flatten(),
         )
         feat = width * 8 * 12
-        self.head = nn.Sequential(
-            nn.Linear(feat + 2, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
-            nn.Linear(512, 2),
-        )
+
+        def mlp(n: int) -> nn.Sequential:
+            return nn.Sequential(nn.Linear(feat + 2, 512), nn.ReLU(inplace=True), nn.Dropout(0.2), nn.Linear(512, n))
+
+        if self.head_sizes:
+            self.heads = nn.ModuleList(mlp(n) for n in self.head_sizes)
+        else:
+            self.head = mlp(outputs)
 
     def forward(self, frames: torch.Tensor, prev_keys: torch.Tensor) -> torch.Tensor:
-        f = self.features(frames)
-        return self.head(torch.cat([f, prev_keys], dim=1))
+        f = torch.cat([self.features(frames), prev_keys], dim=1)
+        out = torch.cat([h(f) for h in self.heads], dim=1) if self.head_sizes else self.head(f)
+        if self.bounded_aim:
+            out = torch.cat([torch.sigmoid(out[:, :2]), out[:, 2:]], dim=1)
+        return out
+
+
+AimNet = FrameNet

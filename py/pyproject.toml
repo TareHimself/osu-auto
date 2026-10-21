@@ -17,6 +17,7 @@ dependencies = [
     "torch>=2.14.1",
     "torchvision>=0.29.1",
     "windows-capture>=2.0.1",
+    "zstandard>=0.25.0",
 ]
 
 [project.scripts]

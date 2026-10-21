@@ -10,6 +10,7 @@ from osu_auto.env import OsuEnv
 from osu_auto.geometry import PlayArea
 from osu_auto.host import HostClient
 from osu_auto.models import AimNet
+from osu_auto.targets import decode_to_playfield
 
 
 def main() -> None:
@@ -30,7 +31,7 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(args.model, map_location=device)
-    model = AimNet(stack=ckpt["stack"], width=ckpt["width"]).to(device).eval()
+    model = AimNet(stack=ckpt["stack"], width=ckpt["width"], heads=ckpt.get("heads"), bounded_aim=ckpt.get("bounded_aim", False)).to(device).eval()
     model.load_state_dict(ckpt["model"])
     h, w = ckpt["frame_hw"]
 
@@ -54,8 +55,7 @@ def main() -> None:
             keys = torch.zeros(1, 2, device=device)
             with torch.no_grad():
                 nx, ny = model(frames, keys)[0].tolist()
-            cx, cy = nx * area.capture.w, ny * area.capture.h
-            x, y = area.window_to_playfield(cx + area.capture.x, cy + area.capture.y)
+            x, y = decode_to_playfield(nx, ny, ckpt, area)
 
             res = env.step(x, y, False, False)
             stack.append(res.obs)

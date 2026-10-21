@@ -94,6 +94,7 @@ public static class Serve
             "cursor" => cursor(Convert.ToBoolean(request["visible"]), !request.TryGetValue("wait", out object? w) || Convert.ToBoolean(w)),
             "backdrop" => backdrop(Convert.ToBoolean(request["visible"])),
             "export_frames" => exportFrames(request),
+            "export_labels" => exportLabels(request),
             "status" => status(),
             _ => throw new ArgumentException($"unknown cmd {cmd}"),
         };
@@ -210,6 +211,14 @@ public static class Serve
 
             await game.WaitForDraws(2).ConfigureAwait(false);
             return new Dictionary<string, object> { ["ok"] = true, ["visible"] = visible };
+        }
+
+        private async Task<Dictionary<string, object>> exportLabels(Dictionary<string, object> request)
+        {
+            var mods = request.TryGetValue("mods", out object? m) && m is object[] list ? list.Select(o => (string)o).ToList() : new List<string>();
+            string dir = await ExportLabels.Run(game, (string)request["map"], request.TryGetValue("diff", out object? d) ? d as string : null,
+                request.TryGetValue("osr", out object? o) ? o as string : null, mods, (string)request["out"]).ConfigureAwait(false);
+            return new Dictionary<string, object> { ["ok"] = true, ["dir"] = dir };
         }
 
         private async Task<Dictionary<string, object>> exportFrames(Dictionary<string, object> request)
@@ -522,7 +531,7 @@ public static class Serve
             }
 
             phase(0);
-            await game.WaitForDraws(2).ConfigureAwait(false);
+            await game.WaitForDraws(1).ConfigureAwait(false);
             phase(1);
 
             return new Dictionary<string, object> { ["ok"] = true, ["clock_ms"] = clock, ["catch_up_frames"] = catchUpFrames };

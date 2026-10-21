@@ -5,8 +5,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-
 from osu_auto.cursor import CursorSprite, gray
+from osu_auto.framestore import FILE, FrameWriter
 from osu_auto.geometry import PlayArea
 from osu_auto.host import HostClient
 from osu_auto.labels import Export, load_export
@@ -45,21 +45,31 @@ def calibrate_cursor(host: HostClient, map_path: str, diff: str | None, mods: li
 
 
 def self_check(host: HostClient, export: Export, sprite: CursorSprite, area: PlayArea, size: tuple[int, int], factor: int) -> dict:
-    """Determinism of seeks, parity of the host's gray path with the cv2 path, and fidelity of the composited cursor."""
+    """Determinism of the export path (stepping forward to a time twice), parity of the host's gray path with the cv2 path,
+    and fidelity of the composited cursor. A long seek can leave Hidden fades in a different state than stepping does,
+    so that difference is only reported."""
     labels = export.labels
     picks = np.linspace(len(labels) // 10, len(labels) - 1, 6).astype(int)
-    t = float(labels.t_ms[picks[0]])
+    j = int(picks[0])
+    t = float(labels.t_ms[j])
+    walk = labels.t_ms[j - 40:j + 1]
 
     host.cursor(False)
-    a, _ = host.export_frames([t], *size)
+    host.seek(float(walk[0]))
+    a = host.export_frames(walk, *size)[0][-1:]
     host.seek(t + 2000)
-    b, _ = host.export_frames([t], *size)
+    host.seek(float(walk[0]))
+    b = host.export_frames(walk, *size)[0][-1:]
     same = float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean())
 
+    host.seek(t + 2000)
+    jump = host.export_frames([t], *size)[0]
+    jump_diff = float(np.abs(jump.astype(np.int16) - a.astype(np.int16)).mean())
+
     _, box, _ = host.seek_grab(t)
-    parity = float(np.abs(to_gray(box, size).astype(np.int16) - a[0].astype(np.int16)).mean())
+    parity = float(np.abs(to_gray(box, size).astype(np.int16) - jump[0].astype(np.int16)).mean())
     if same >= 1 or parity >= 1:
-        for name, img in (("a", a[0]), ("b", b[0]), ("cv2", to_gray(box, size))):
+        for name, img in (("a", a[0]), ("b", b[0]), ("jump", jump[0]), ("cv2", to_gray(box, size))):
             cv2.imwrite(str(export.path / f"selfcheck_{name}.png"), img)
 
     fidelity = []
@@ -75,13 +85,14 @@ def self_check(host: HostClient, export: Export, sprite: CursorSprite, area: Pla
         diff = np.abs(comp.astype(np.int16) - real.astype(np.int16))
         fidelity.append((float(diff.mean()), int(diff.max()), float(np.abs(none[0].astype(np.int16) - real.astype(np.int16)).mean())))
 
-    return {"same_time_diff": same, "gray_parity": parity,
+    return {"same_time_diff": same, "jump_vs_walk_diff": jump_diff, "gray_parity": parity,
             "composite_mean_diff": float(np.mean([f[0] for f in fidelity])), "composite_max_diff": int(max(f[1] for f in fidelity)),
             "cursor_effect": float(np.mean([f[2] for f in fidelity]))}
 
 
 def export_frames(host: HostClient, map_path: str, export_dir: str | Path, diff: str | None = None, osr: str | None = None,
-                  mods: list[str] | None = None, size: tuple[int, int] = (160, 120), limit: int | None = None, log=print) -> dict:
+                  mods: list[str] | None = None, size: tuple[int, int] = (160, 120), limit: int | None = None, log=print,
+                  sprite: CursorSprite | None = None) -> dict:
     export = load_export(export_dir)
     labels = export.labels
     w, h = size
@@ -90,7 +101,8 @@ def export_frames(host: HostClient, map_path: str, export_dir: str | Path, diff:
     client = host.status()["client_size"]
     area = PlayArea(client[0], client[1])
     factor = round(area.capture.w / w)
-    sprite = calibrate_cursor(host, map_path, diff, None if osr else mods, area)
+    if sprite is None:
+        sprite = calibrate_cursor(host, map_path, diff, None if osr else mods, area)
 
     info = host.load(map_path, diff=diff, osr=osr, mods=mods)
     log(f"loaded {info['title']} [{info['difficulty']}] mods={mods or []} client={client} -> {w}x{h} (factor {factor}), {n} steps, cursor sprite {sprite.premult.shape[1]}x{sprite.premult.shape[0]}")
@@ -105,30 +117,31 @@ def export_frames(host: HostClient, map_path: str, export_dir: str | Path, diff:
         raise RuntimeError("composited cursor does not reproduce the rendered cursor")
 
     host.cursor(False)
-    (export.path / "frames_nocursor.npy").unlink(missing_ok=True)
-    frames = np.lib.format.open_memmap(export.path / "frames.npy", mode="w+", dtype=np.uint8, shape=(n, h, w))
+    for stale in ("frames_nocursor.npy", "frames.npy"):
+        (export.path / stale).unlink(missing_ok=True)
+    writer = FrameWriter(export.path / FILE, h, w)
     clocks = np.zeros(n, dtype=np.float64)
 
     t0 = time.perf_counter()
     for start in range(0, n, CHUNK):
         stop = min(start + CHUNK, n)
-        frames[start:stop], clocks[start:stop] = host.export_frames(labels.t_ms[start:stop], w, h)
+        block, clocks[start:stop] = host.export_frames(labels.t_ms[start:stop], w, h)
+        writer.append(block)
         rate = stop / (time.perf_counter() - t0)
         log(f"{stop}/{n} t={labels.t_ms[stop - 1]:.0f} {rate:.1f} steps/s eta {(n - stop) / max(rate, 1e-6):.0f} s")
 
-    frames.flush()
-    del frames
+    store = writer.close()
     np.save(export.path / "frame_clock_ms.npy", clocks)
     sprite.save(export.path / "cursor.npz")
     host.cursor(True)
 
     bad = int(np.sum(np.abs(clocks - labels.t_ms[:n]) > 0.5))
     meta = dict(export.meta)
-    meta["frames"] = {"path": "frames.npy", "count": n, "width": w, "height": h, "gray": True, "box": "4:3 play area", "cursor_hidden": True,
+    meta["frames"] = {**store, "count": n, "width": w, "height": h, "gray": True, "box": "4:3 play area", "cursor_hidden": True,
                       "cursor": "cursor.npz", "factor": factor, "clock_mismatches": bad, "window_client": list(client), "capture": "readback",
                       "self_check": checks, "steps_per_s": n / (time.perf_counter() - t0)}
     (export.path / "meta.json").write_text(json.dumps(meta, indent=2))
-    log(f"done: {n} frames -> {export.path / 'frames.npy'}, clock mismatches={bad}, {meta['frames']['steps_per_s']:.1f} steps/s")
+    log(f"done: {n} frames -> {export.path / FILE} ({writer.offset / 2**20:.1f} MB), clock mismatches={bad}, {meta['frames']['steps_per_s']:.1f} steps/s")
     return meta["frames"]
 
 

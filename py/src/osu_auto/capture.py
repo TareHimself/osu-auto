@@ -48,8 +48,8 @@ class WindowCapture:
     so callers can wait for frames that arrived after a known point in time.
     """
 
-    def __init__(self, title: str = "osu-auto"):
-        self.hwnd = find_window(title)
+    def __init__(self, title: str = "osu-auto", hwnd: int | None = None):
+        self.hwnd = hwnd or find_window(title)
         self._lock = threading.Condition()
         self._latest: Captured | None = None
         self._count = 0
