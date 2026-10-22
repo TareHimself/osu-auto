@@ -33,18 +33,19 @@ class Chunk:
 class GpuCursor:
     """All exports' cursor sprites padded to one size, composited in a batch with the same maths as CursorSprite."""
 
-    def __init__(self, exports: list[FrameExport], device: torch.device):
+    def __init__(self, exports: list[FrameExport], device: torch.device, max_scale: float = 1.0):
         h = max(e.cursor.premult.shape[0] for e in exports)
         w = max(e.cursor.premult.shape[1] for e in exports)
-        premult = np.zeros((len(exports), h, w), np.float32)
-        alpha = np.zeros((len(exports), h, w), np.float32)
+        pad = int(math.ceil(max(h, w) * (max_scale - 1))) + 1 if max_scale > 1 else 0
+        premult = np.zeros((len(exports), h + 2 * pad, w + 2 * pad), np.float32)
+        alpha = np.zeros_like(premult)
         for k, e in enumerate(exports):
             sh, sw = e.cursor.premult.shape
-            premult[k, :sh, :sw] = e.cursor.premult
-            alpha[k, :sh, :sw] = e.cursor.alpha
+            premult[k, pad:pad + sh, pad:pad + sw] = e.cursor.premult
+            alpha[k, pad:pad + sh, pad:pad + sw] = e.cursor.alpha
         self.premult = torch.from_numpy(premult).to(device)
         self.alpha = torch.from_numpy(alpha).to(device)
-        self.offset = torch.tensor([e.cursor.offset for e in exports], dtype=torch.float32, device=device)
+        self.offset = torch.tensor([e.cursor.offset for e in exports], dtype=torch.float32, device=device) - pad
         self.factor = torch.tensor([e.factor for e in exports], dtype=torch.int64, device=device)
         self.device = device
 
@@ -54,8 +55,23 @@ class GpuCursor:
         return ((1 - fy) * (1 - fx) * F.pad(layer, (0, 1, 0, 1)) + (1 - fy) * fx * F.pad(layer, (1, 0, 0, 1))
                 + fy * (1 - fx) * F.pad(layer, (0, 1, 1, 0)) + fy * fx * F.pad(layer, (1, 0, 1, 0)))
 
-    def composite(self, frames: torch.Tensor, export_id: torch.Tensor, xy: torch.Tensor) -> torch.Tensor:
-        """frames (N, H, W) float in 0..255, xy (N, 2) hotspot in capture pixels -> frames with the cursor drawn, rounded to whole values."""
+    def _scaled(self, export_id: torch.Tensor, scale: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sprites resized by `scale` about their hotspot, on the same canvas."""
+        premult, alpha = self.premult[export_id], self.alpha[export_id]
+        sh, sw = premult.shape[1:]
+        hot = -self.offset[export_id]
+        inv = 1 / scale
+        cx = 2 * hot[:, 0] / sw - 1
+        cy = 2 * hot[:, 1] / sh - 1
+        zero = torch.zeros_like(inv)
+        theta = torch.stack([torch.stack([inv, zero, cx * (1 - inv)], 1), torch.stack([zero, inv, cy * (1 - inv)], 1)], 1)
+        grid = F.affine_grid(theta, (len(scale), 1, sh, sw), align_corners=False)
+        both = F.grid_sample(torch.stack([premult, alpha], 1), grid, mode="bilinear", padding_mode="zeros", align_corners=False)
+        return both[:, 0], both[:, 1]
+
+    def composite(self, frames: torch.Tensor, export_id: torch.Tensor, xy: torch.Tensor, scale: torch.Tensor | None = None) -> torch.Tensor:
+        """frames (N, H, W) float in 0..255, xy (N, 2) hotspot in capture pixels, scale (N,) cursor size factor or None
+        -> frames with the cursor drawn, rounded to whole values."""
         n, h, w = frames.shape
         factor = self.factor[export_id]
         if not bool((factor == factor[0]).all()):
@@ -65,8 +81,12 @@ class GpuCursor:
         ipos = torch.floor(pos)
         frac = pos - ipos
         ipos = ipos.long()
-        premult = self._shift(self.premult[export_id], frac[:, 0], frac[:, 1])
-        alpha = self._shift(self.alpha[export_id], frac[:, 0], frac[:, 1])
+        if scale is None:
+            premult, alpha = self.premult[export_id], self.alpha[export_id]
+        else:
+            premult, alpha = self._scaled(export_id, scale)
+        premult = self._shift(premult, frac[:, 0], frac[:, 1])
+        alpha = self._shift(alpha, frac[:, 0], frac[:, 1])
         sh, sw = premult.shape[1:]
         ph = -(-(f - 1 + sh) // f) * f
         pw = -(-(f - 1 + sw) // f) * f
@@ -104,7 +124,8 @@ class GpuChunkLoader:
     def __init__(self, exports: list[FrameExport], device: torch.device, stack: int = 4, click_horizon: int = 1, chunk_bytes: int = 3 << 30,
                  real_prob: float = 0.5, real_lag: int = 5, batch: int = 128, shuffle: bool = True, drop_last: bool = True, seed: int = 0,
                  stride: int = 1, pool: int = 1, heat: float = 0.0, heat_floor: float = 0.25, click_reweight: bool = False, latency_max_ms: float = 0.0, step_ms: float = 10.0,
-                 active_only: bool = True, offsets: list[int] | None = None, spin_recover: float = 0.0, spin_weight: float = 2.0):
+                 active_only: bool = True, offsets: list[int] | None = None, spin_recover: float = 0.0, spin_weight: float = 2.0,
+                 cursor_scale: tuple[float, float] = (1.0, 1.0), cursor_scale_p: float = 0.0):
         """`heat` > 0 samples rows in proportion to (strain of the approached object, normalised to mean 1) + press windows,
         mixed with uniform: weight = heat_floor + heat * score. 0 keeps uniform sampling."""
         self.exports = exports
@@ -137,7 +158,9 @@ class GpuChunkLoader:
         self.gen = torch.Generator(device=device)
         self.gen.manual_seed(seed)
         self.rng = np.random.default_rng(seed)
-        self.cursor = GpuCursor(exports, device)
+        self.cursor_scale = cursor_scale if cursor_scale_p > 0 and cursor_scale != (1.0, 1.0) else None
+        self.cursor_scale_p = cursor_scale_p
+        self.cursor = GpuCursor(exports, device, max_scale=self.cursor_scale[1] if self.cursor_scale else 1.0)
         self.chunk_bytes = chunk_bytes
         self.groups = self._group(list(range(len(exports))))
 
@@ -262,12 +285,17 @@ class GpuChunkLoader:
         max_lag = torch.where(in_spinner, torch.ones_like(lo), torch.full_like(lo, self.real_lag))
         lag = (torch.rand(b, generator=self.gen, device=self.device) * (max_lag + 1).float()).long().clamp(max=self.real_lag)
         lag = torch.minimum(lag, lo)
+        cscale = None
+        if self.cursor_scale:
+            lo_s, hi_s = math.log(self.cursor_scale[0]), math.log(self.cursor_scale[1])
+            drawn_scale = torch.exp(lo_s + (hi_s - lo_s) * torch.rand(b, generator=self.gen, device=self.device))
+            cscale = torch.where(torch.rand(b, generator=self.gen, device=self.device) < self.cursor_scale_p, drawn_scale, torch.ones_like(drawn_scale))
         if bool(real.any()):
             sel = real.nonzero()[:, 0]
             pos_idx = (idx[sel] - lag[sel][:, None]).reshape(-1)
             xy = c.cursor_xy[pos_idx]
             flat = frames[sel].reshape(-1, *frames.shape[2:])
-            drawn = self.cursor.composite(flat, export_id[sel].repeat_interleave(s), xy)
+            drawn = self.cursor.composite(flat, export_id[sel].repeat_interleave(s), xy, None if cscale is None else cscale[sel].repeat_interleave(s))
             frames[sel] = drawn.view(len(sel), s, *frames.shape[2:])
         spin_theta = None
         if bool(synth.any()):
@@ -283,7 +311,7 @@ class GpuChunkLoader:
             eid = export_id[sel]
             xy = pf * self.pf_scale[eid][:, None, None] + self.pf_off[eid][:, None, :]
             flat = frames[sel].reshape(-1, *frames.shape[2:])
-            drawn = self.cursor.composite(flat, eid.repeat_interleave(s), xy.reshape(-1, 2))
+            drawn = self.cursor.composite(flat, eid.repeat_interleave(s), xy.reshape(-1, 2), None if cscale is None else cscale[sel].repeat_interleave(s))
             frames[sel] = drawn.view(n, s, *frames.shape[2:])
             spin_theta = (sel, theta0)
         if self.pool > 1:

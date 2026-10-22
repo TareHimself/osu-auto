@@ -20,7 +20,7 @@ from osu_auto.tracking import Tracker
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Behaviour-clone aim and click together: one net, outputs (x, y, press, down)")
+    p = argparse.ArgumentParser(description="Behaviour-clone aim and click together: one net, outputs (x, y, press, down)", fromfile_prefix_chars="@")
     p.add_argument("exports", nargs="+")
     p.add_argument("--out", default="F:/osu-auto/data/models/joint")
     p.add_argument("--stack", type=int, default=4)
@@ -44,6 +44,8 @@ def main() -> None:
     p.add_argument("--spin-recover", type=float, default=0.5, help="share of spinner samples drawn with a synthetic off-phase or stalled cursor, labelled one step ahead around the centre")
     p.add_argument("--spin-weight", type=float, default=2.0, help="extra heat weight for spinner rows")
     p.add_argument("--no-onnx", action="store_true", help="skip exporting joint_best.onnx for the runner at the end")
+    p.add_argument("--cursor-scale", default="1,1", help="min,max cursor size factor drawn log-uniformly in training (lazer's cursor size setting)")
+    p.add_argument("--cursor-scale-p", type=float, default=0.0, help="share of samples drawn with a random cursor size")
     p.add_argument("--click-reweight", action="store_true", help="weight spinner rows in the click loss by their unboosted sampling rate")
     p.add_argument("--aim-head", default="mlp", choices=["mlp", "softargmax"])
     p.add_argument("--att-loss", type=float, default=0.1, help="weight of the heatmap cross entropy on the softargmax attention")
@@ -60,7 +62,7 @@ def main() -> None:
     if args.chunk_gb > 0:
         train_ex, val_ex = split_exports(exports, args.holdout)
         chunk = int(args.chunk_gb * (1 << 30))
-        train = GpuChunkLoader(train_ex, device, stack=args.stack, real_lag=args.real_lag, batch=args.batch, chunk_bytes=chunk, pool=args.pool, heat=args.heat, click_reweight=args.click_reweight, latency_max_ms=args.latency_max, offsets=offsets, spin_recover=args.spin_recover, spin_weight=args.spin_weight)
+        train = GpuChunkLoader(train_ex, device, stack=args.stack, real_lag=args.real_lag, batch=args.batch, chunk_bytes=chunk, pool=args.pool, heat=args.heat, click_reweight=args.click_reweight, cursor_scale=tuple(float(v) for v in args.cursor_scale.split(",")), cursor_scale_p=args.cursor_scale_p, latency_max_ms=args.latency_max, offsets=offsets, spin_recover=args.spin_recover, spin_weight=args.spin_weight)
         val = GpuChunkLoader(val_ex, device, stack=args.stack, real_lag=args.real_lag, batch=args.batch, chunk_bytes=chunk, shuffle=False, drop_last=False, stride=args.val_stride, pool=args.pool, offsets=offsets)
         print(f"device={device} exports train={len(train_ex)} val={len(val_ex)} chunks={len(train.groups)}+{len(val.groups)} batches={len(train)}+{len(val)} stack={args.stack} frame={frame_hw}")
     else:
