@@ -15,7 +15,7 @@ from osu_auto.models import FrameNet
 class KeyExecutor:
     """Turns per-step press/hold decisions into k1/k2 states, alternating keys on every new press."""
 
-    def __init__(self, min_press_gap: int = 2, press_threshold: float = 0.5, rearm: float = 0.3):
+    def __init__(self, min_press_gap: int = 2, press_threshold: float = 0.5, rearm: float = 0.3, release: float = 0.25):
         self.down = False
         self.key = 1
         self.pressed = False
@@ -24,12 +24,19 @@ class KeyExecutor:
         self.press_threshold = press_threshold
         self.rearm = rearm
         self.armed = True
+        self.prev_down = 0.0
+        self.release = release
 
-    def apply(self, p_press: float, hold: bool) -> tuple[bool, bool]:
-        """One press per excursion of the press probability: it must fall below `rearm` before it can fire again."""
+    def apply(self, p_press: float, hold: bool, p_down: float | None = None) -> tuple[bool, bool]:
+        """One press per excursion of the press probability: it must fall below `rearm` before it can fire again.
+        A rising edge of the hold probability is also a press (that is how the labels define one), caught when no key is held."""
         if p_press < self.rearm:
             self.armed = True
-        press = self.armed and p_press > self.press_threshold and self.since_press >= self.min_press_gap
+        if p_down is not None and self.down:
+            hold = p_down > self.release
+        edge = p_down is not None and self.prev_down < 0.5 <= p_down and not self.down
+        self.prev_down = p_down if p_down is not None else 0.0
+        press = (self.armed and p_press > self.press_threshold or edge) and self.since_press >= self.min_press_gap
         self.since_press += 1
         if press:
             self.key = 1 - self.key

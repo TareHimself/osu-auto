@@ -1,6 +1,7 @@
 import argparse
 import json
 import time
+from pathlib import Path
 from collections import deque
 
 import numpy as np
@@ -12,11 +13,41 @@ from osu_auto.geometry import PlayArea
 from osu_auto.host import HostClient
 from osu_auto.models import FrameNet
 from osu_auto.targets import decode_to_playfield
+from osu_auto.tracking import log_eval
+
+
+def object_starts(map_path: str, diff: str | None) -> np.ndarray:
+    """Hit object start times of the chosen difficulty (lowest-named when none), read straight from the .osz.
+    Spinners also contribute a time every second through to their end, so gap skipping never jumps over one."""
+    import re
+    import zipfile
+
+    with zipfile.ZipFile(map_path) as z:
+        names = [n for n in z.namelist() if n.endswith(".osu")]
+        chosen = names[0]
+        for n in names:
+            text = z.read(n).decode("utf-8", "replace")
+            m = re.search(r"^Version:\s*(.*)$", text, re.M)
+            if diff and m and m.group(1).strip().lower() == diff.lower():
+                chosen = n
+                break
+        text = z.read(chosen).decode("utf-8", "replace")
+    starts = []
+    for line in text.split("[HitObjects]", 1)[1].splitlines():
+        parts = line.split(",")
+        if len(parts) >= 4:
+            try:
+                starts.append(float(parts[2]))
+                if int(parts[3]) & 8 and len(parts) >= 6:
+                    starts.extend(np.arange(float(parts[2]), float(parts[5]), 1000.0)[1:].tolist() + [float(parts[5])])
+            except ValueError:
+                pass
+    return np.array(sorted(starts))
 
 
 def load(path: str, device: torch.device) -> tuple[FrameNet, dict]:
     ckpt = torch.load(path, map_location=device)
-    model = FrameNet(stack=ckpt["stack"], width=ckpt["width"], outputs=ckpt.get("outputs", 2), heads=ckpt.get("heads"), bounded_aim=ckpt.get("bounded_aim", False)).to(device).eval()
+    model = FrameNet(stack=ckpt["stack"], width=ckpt["width"], outputs=ckpt.get("outputs", 2), heads=ckpt.get("heads"), bounded_aim=ckpt.get("bounded_aim", False), aim_head=ckpt.get("aim_head", "mlp")).to(device).eval()
     model.load_state_dict(ckpt["model"])
     return model, ckpt
 
@@ -35,6 +66,13 @@ def main() -> None:
     p.add_argument("--press-threshold", type=float, default=0.5)
     p.add_argument("--hold-threshold", type=float, default=0.5)
     p.add_argument("--min-press-gap", type=int, default=2)
+    p.add_argument("--latency", type=float, default=None, help="latency in ms fed to a latency-conditioned model (default: delay * step)")
+    p.add_argument("--delay", type=int, default=0, help="apply each action this many steps late, to simulate pipeline latency")
+    p.add_argument("--wandb", default=None, help="also log the result to the model's wandb run")
+    p.add_argument("--release", type=float, default=0.25, help="once a key is down, release only when p_down falls below this")
+    p.add_argument("--no-edge", action="store_true", help="do not take a rising edge of the hold probability as a press")
+    p.add_argument("--trace", default=None, help="save per-step t, x, y, p_press, p_down, k1, k2 to this .npz")
+    p.add_argument("--skip-gaps", type=float, default=4000, help="jump over stretches with no object start for this many ms (breaks, intro); 0 = play everything")
     p.add_argument("--endpoint", default="tcp://127.0.0.1:5555")
     args = p.parse_args()
 
@@ -49,24 +87,39 @@ def main() -> None:
             raise SystemExit("aim and click models must share frame size and stack")
     h, w = aim_ck["frame_hw"]
     stack_n = aim_ck["stack"]
+    offsets = aim_ck.get("offsets") or list(range(stack_n))
+    span = max(offsets) + 1
+
+    def gather(hist):
+        return np.stack([hist[-1 - k] for k in reversed(offsets)])
 
     with HostClient(args.endpoint, timeout_ms=600_000) as host:
         env = OsuEnv(host, None, obs_size=(w, h))
         client = host.status()["client_size"]
         area = PlayArea(client[0], client[1])
         res = env.reset(args.map_path, diff=args.diff, clicks="agent", mods=[], start_ms=args.start_ms)
-        stack = deque([res.obs] * stack_n, maxlen=stack_n)
-        keys = KeyExecutor(args.min_press_gap, args.press_threshold, 1.0)
+        stack = deque([res.obs] * span, maxlen=span)
+        starts = object_starts(args.map_path, args.diff) if args.skip_gaps else np.array([])
+        skipped_ms = 0.0
+        keys = KeyExecutor(args.min_press_gap, args.press_threshold, 1.0, args.release)
         zeros = torch.zeros(1, 2, device=device)
+        latency_max = float(aim_ck.get("latency_max_ms", 0.0))
+        latency = args.delay * env.step_ms if args.latency is None else args.latency
+        if latency_max:
+            zeros[0, 0] = min(latency, latency_max) / latency_max
+            print(f"latency input {latency:.0f} ms (model max {latency_max:.0f})")
+        from collections import deque as _dq
+        pending = _dq()
         hits: dict[str, int] = {}
         press_times: list[float] = []
+        trace: list[tuple] = []
         steps = 0
         consecutive_misses = 0
         stopped = ""
         t0 = time.perf_counter()
 
         while not env.done and (args.max_steps is None or steps < args.max_steps):
-            frames = torch.from_numpy(np.stack(stack)).float().div_(255.0).unsqueeze(0).to(device)
+            frames = torch.from_numpy(gather(stack)).float().div_(255.0).unsqueeze(0).to(device)
             with torch.no_grad():
                 if args.joint:
                     o = joint(frames, zeros)[0]
@@ -76,12 +129,27 @@ def main() -> None:
                     nx, ny = aim(frames, zeros)[0].tolist()
                     p_press, p_hold = torch.sigmoid(click(frames, zeros))[0].tolist()
             x, y = decode_to_playfield(nx, ny, aim_ck, area)
-            k1, k2 = keys.apply(p_press, p_hold > args.hold_threshold)
+            k1, k2 = keys.apply(p_press, p_hold > args.hold_threshold, None if args.no_edge else p_hold)
             if keys.pressed:
                 press_times.append(env.t + env.step_ms)
 
+            pending.append((x, y, k1, k2))
+            if len(pending) <= args.delay:
+                x, y, k1, k2 = pending[0][0], pending[0][1], False, False
+            else:
+                x, y, k1, k2 = pending.popleft()
             res = env.step(x, y, k1, k2)
+            trace.append((env.t, x, y, p_press, p_hold, k1, k2))
             stack.append(res.obs)
+            if len(starts):
+                nxt = starts[np.searchsorted(starts, env.t)] if np.searchsorted(starts, env.t) < len(starts) else None
+                if nxt is not None and nxt - env.t > args.skip_gaps:
+                    target = nxt - 1500
+                    skipped_ms += target - env.t
+                    env.t = target - env.step_ms
+                    pending.clear()
+                    res = env.step(x, y, False, False)
+                    stack = deque([res.obs] * span, maxlen=span)
             for k, v in res.hits.items():
                 hits[k] = hits.get(k, 0) + v
             misses = res.hits.get("Miss", 0)
@@ -97,9 +165,16 @@ def main() -> None:
         judged = sum(v for k, v in hits.items() if k in ("Great", "Ok", "Meh", "Miss"))
         circle_acc = (hits.get("Great", 0) + hits.get("Ok", 0) + hits.get("Meh", 0)) / max(judged, 1)
         print(f"final: t={res.t_ms:.0f} combo={res.combo} max_combo? circle_hit_rate={circle_acc:.3f} ({judged} circles) game_accuracy={res.accuracy:.4f} "
-              f"score={res.score} presses={len(press_times)} hits={hits} steps={steps}" + (f" stopped early: {stopped}" if stopped else ""))
-        if args.export:
-            print("timing:", json.dumps(timing_report(press_times, args.export, env.step_ms)))
+              f"score={res.score} presses={len(press_times)} hits={hits} steps={steps} skipped={skipped_ms / 1000:.0f}s" + (f" stopped early: {stopped}" if stopped else ""))
+        timing = timing_report(press_times, args.export, env.step_ms) if args.export else None
+        if timing:
+            print("timing:", json.dumps(timing))
+        model_dir = Path(args.joint or args.aim).parent
+        log_eval(model_dir, {"map": f"{Path(args.map_path).stem}[{args.diff or 'lowest'}]", "model": str(args.joint or args.aim), "delay": args.delay, "latency": latency if latency_max else 0.0,
+                             "circle_hit_rate": circle_acc, "game_accuracy": res.accuracy, "score": res.score, "max_combo": res.combo, "circles": judged, "presses": len(press_times),
+                             "hits": hits, "timing": timing, "when": time.strftime("%Y-%m-%d %H:%M")}, args.wandb)
+        if args.trace:
+            np.savez(args.trace, trace=np.array(trace, dtype=np.float64))
         host.quit()
 
 

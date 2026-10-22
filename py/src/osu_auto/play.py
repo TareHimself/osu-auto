@@ -220,7 +220,7 @@ class Player:
 
     def _load(self, path: str):
         ck = torch.load(path, map_location=self.device)
-        m = FrameNet(stack=ck["stack"], width=ck["width"], outputs=ck.get("outputs", 2), heads=ck.get("heads"), bounded_aim=ck.get("bounded_aim", False)).to(self.device).eval()
+        m = FrameNet(stack=ck["stack"], width=ck["width"], outputs=ck.get("outputs", 2), heads=ck.get("heads"), bounded_aim=ck.get("bounded_aim", False), aim_head=ck.get("aim_head", "mlp")).to(self.device).eval()
         m.load_state_dict(ck["model"])
         return m, ck
 
@@ -479,7 +479,7 @@ def headless(args) -> None:
 def main() -> None:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--model", default=str(ROOT / "data/models/joint_v3_lat2/joint_best.pt"), help="unified checkpoint (x, y, press, down), or an aim-only checkpoint used together with --click")
+    ap.add_argument("--model", default=str(ROOT / "data/models/joint_v3_att_cw/joint_best.pt"), help="unified checkpoint (x, y, press, down), or an aim-only checkpoint used together with --click")
     ap.add_argument("--click", default=str(ROOT / "data/models/click_grid_h1/click_best.pt"))
     ap.add_argument("--filter", default="osu!", help="window title prefix")
     ap.add_argument("--smooth-cutoff", type=float, default=2.0, help="1 euro filter minimum cutoff in Hz for the aim output; 0 disables smoothing")
