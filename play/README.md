@@ -24,8 +24,10 @@ PYTHONUTF8=1 uv run python -m osu_auto.export_onnx ../data/models/joint_v3_spin3
 From the repo root:
 
 ```
-uv run --project play/shell silo run -C play/shell runner play data/models/joint_v3_spin3/joint_best.onnx
+uv run --project play/shell silo run -C play/shell runner play
 ```
+
+With no model path it loads `data/models/current/joint_best.onnx` and prints which run that is. Put a trained run there with `python -m osu_auto.promote <run>` (from `py/`). To run something else, pass the path: `runner play data/models/joint_v3_spin3/joint_best.onnx`.
 
 The first run builds the runner and downloads onnxruntime, cuDNN and cuBLAS (about 2 GB, cached by silo). Later runs start straight away.
 

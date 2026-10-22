@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -185,13 +187,55 @@ int capture(const std::wstring& prefix, int seconds, const char* pgm_path, bool 
 }
 
 
+const char* kDefaultModel = "data/models/current/joint_best.onnx";
+
+std::filesystem::path find_default_model() {
+    wchar_t buffer[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    std::vector<std::filesystem::path> starts = {std::filesystem::current_path()};
+    if (n > 0) starts.insert(starts.begin(), std::filesystem::path(buffer, buffer + n).parent_path());
+    for (auto dir : starts) {
+        for (; !dir.empty(); dir = dir.parent_path()) {
+            const auto candidate = dir / kDefaultModel;
+            if (std::filesystem::exists(candidate)) return candidate;
+            if (dir == dir.parent_path()) break;
+        }
+    }
+    return {};
+}
+
+void print_model(const std::string& model, bool is_default) {
+    std::string label = std::filesystem::path(model).parent_path().filename().string();
+    std::ifstream source(std::filesystem::path(model).parent_path() / "source.json");
+    std::string text((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+    const auto key = text.find("\"run\"");
+    if (key != std::string::npos) {
+        const auto open = text.find('"', text.find(':', key) + 1);
+        const auto close = open == std::string::npos ? open : text.find('"', open + 1);
+        if (close != std::string::npos) label += " (" + text.substr(open + 1, close - open - 1) + ")";
+    }
+    std::printf("model: %s%s\n", label.c_str(), is_default ? "" : (" [" + model + "]").c_str());
+}
+
 int play(int argc, char** argv) {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     PlayOptions options;
-    options.model = argv[2];
+    const bool is_default = argc < 3 || std::string(argv[2]).rfind("--", 0) == 0;
+    int first_option = is_default ? 2 : 3;
+    if (is_default) {
+        const auto found = find_default_model();
+        if (found.empty()) {
+            std::fprintf(stderr, "no model given and %s not found\n", kDefaultModel);
+            return 1;
+        }
+        options.model = found.string();
+    } else {
+        options.model = argv[2];
+    }
+    print_model(options.model, is_default);
     int duration = 0;
     bool start_now = false;
-    for (int i = 3; i < argc; ++i) {
+    for (int i = first_option; i < argc; ++i) {
         const std::string a = argv[i];
         const bool has_value = i + 1 < argc;
         if (a == "--no-inject") {
@@ -265,7 +309,7 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "verify") {
         return verify(argv[2], argv[3], argc < 5 || std::string(argv[4]) == "cuda");
     }
-    if (argc >= 3 && std::string(argv[1]) == "play") return play(argc, argv);
+    if (argc >= 2 && std::string(argv[1]) == "play") return play(argc, argv);
     if (argc >= 3 && std::string(argv[1]) == "shader-test") return shader_test(argv[2]);
     if (argc >= 3 && std::string(argv[1]) == "hook") {
         const std::string prefix = argc > 3 ? argv[3] : "osu!";
@@ -277,6 +321,6 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "capture") {
         return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
     }
-    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play <model.onnx> [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n");
+    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play [model.onnx] [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n");
     return 2;
 }
