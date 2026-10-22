@@ -12,3 +12,4 @@ headless/
 *.osz
 *.osk
 *.osr
+wandb/

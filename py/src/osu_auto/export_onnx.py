@@ -10,24 +10,17 @@ from .models import FrameNet
 
 
 def load_model(ck: dict) -> FrameNet:
-    model = FrameNet(stack=ck["stack"], width=ck["width"], outputs=ck.get("outputs", 2), heads=ck.get("heads"), bounded_aim=ck.get("bounded_aim", False))
+    model = FrameNet(stack=ck["stack"], width=ck["width"], outputs=ck.get("outputs", 2), heads=ck.get("heads"), bounded_aim=ck.get("bounded_aim", False), aim_head=ck.get("aim_head", "mlp"))
     model.load_state_dict(ck["model"])
     return model.eval()
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Export a joint checkpoint to ONNX for the native runner.")
-    ap.add_argument("checkpoint")
-    ap.add_argument("--out", default=None, help="output .onnx path (default: next to the checkpoint)")
-    ap.add_argument("--samples", type=int, default=100)
-    ap.add_argument("--tol", type=float, default=1e-3)
-    args = ap.parse_args()
-
-    ck = torch.load(args.checkpoint, map_location="cpu")
+def export(checkpoint: str | Path, out: str | Path | None = None, samples: int = 100, tol: float = 1e-3) -> Path:
+    ck = torch.load(checkpoint, map_location="cpu")
     model = load_model(ck)
     h, w = ck["frame_hw"]
     stack = ck["stack"]
-    out = Path(args.out) if args.out else Path(args.checkpoint).with_suffix(".onnx")
+    out = Path(out) if out else Path(checkpoint).with_suffix(".onnx")
 
     frames = torch.zeros(1, stack, h, w)
     aux = torch.zeros(1, 2)
@@ -39,16 +32,30 @@ def main() -> None:
     rng = np.random.default_rng(0)
     sess = ort.InferenceSession(str(out), providers=["CPUExecutionProvider"])
     worst = 0.0
-    for _ in range(args.samples):
+    for _ in range(samples):
         f = torch.from_numpy(rng.integers(0, 256, (1, stack, h, w), dtype=np.uint8)).float() / 255.0
         a = torch.tensor([[rng.random(), 0.0]], dtype=torch.float32)
         with torch.no_grad():
             ref = model(f, a).numpy()
         got = sess.run(None, {"frames": f.numpy(), "aux": a.numpy()})[0]
         worst = max(worst, float(np.abs(ref - got).max()))
-    print(f"wrote {out}, max abs diff over {args.samples} samples: {worst:.2e}")
-    if worst > args.tol:
-        raise SystemExit(f"diff {worst:.2e} exceeds {args.tol:.0e}")
+    print(f"wrote {out}, max abs diff over {samples} samples: {worst:.2e}")
+    if worst > tol:
+        raise RuntimeError(f"onnx diff {worst:.2e} exceeds {tol:.0e}")
+    return out
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Export a joint checkpoint to ONNX for the native runner.")
+    ap.add_argument("checkpoint")
+    ap.add_argument("--out", default=None, help="output .onnx path (default: next to the checkpoint)")
+    ap.add_argument("--samples", type=int, default=100)
+    ap.add_argument("--tol", type=float, default=1e-3)
+    args = ap.parse_args()
+    try:
+        export(args.checkpoint, args.out, args.samples, args.tol)
+    except RuntimeError as e:
+        raise SystemExit(str(e))
 
 
 if __name__ == "__main__":

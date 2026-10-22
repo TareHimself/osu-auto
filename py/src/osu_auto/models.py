@@ -1,5 +1,8 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
+
+AIM_FROM_BOX = ((0.625, 0.1875), (0.625, 0.17708333))
 
 
 class ConvBlock(nn.Sequential):
@@ -11,18 +14,48 @@ class ConvBlock(nn.Sequential):
         )
 
 
+class SoftArgmaxAim(nn.Module):
+    """Scores every stride 8 cell and aims at the attention-weighted mean of the cell centres. Context comes from the upsampled
+    stride 16 map; the aux inputs (latency, keys) modulate the score features."""
+
+    def __init__(self, c8: int, c16: int, aux: int, hidden: int = 64):
+        super().__init__()
+        self.mix = nn.Sequential(ConvBlock(c8 + c16, hidden, 1), ConvBlock(hidden, hidden, 1))
+        self.film = nn.Linear(aux, hidden * 2)
+        nn.init.zeros_(self.film.weight)
+        nn.init.zeros_(self.film.bias)
+        self.score = nn.Conv2d(hidden, 1, 1)
+        self.temp = nn.Parameter(torch.ones(()))
+
+    def forward(self, s8: torch.Tensor, s16: torch.Tensor, aux: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        h = self.mix(torch.cat([s8, F.interpolate(s16, size=s8.shape[-2:], mode="bilinear", align_corners=False)], dim=1))
+        film = self.film(aux)
+        scale, shift = film[:, : film.shape[1] // 2], film[:, film.shape[1] // 2 :]
+        h = torch.relu(h * (1 + scale[:, :, None, None]) + shift[:, :, None, None])
+        gh, gw = s8.shape[-2:]
+        logits = (self.score(h).flatten(1) * self.temp).float()
+        att = logits.softmax(dim=1)
+        v, u = torch.meshgrid((torch.arange(gh, device=s8.device) + 0.5) / gh, (torch.arange(gw, device=s8.device) + 0.5) / gw, indexing="ij")
+        (ax, bx), (ay, by) = AIM_FROM_BOX
+        x = bx + ax * (att * u.flatten()).sum(1)
+        y = by + ay * (att * v.flatten()).sum(1)
+        return torch.stack([x, y], dim=1), logits.view(-1, gh, gw)
+
+
 class FrameNet(nn.Module):
     """Small conv net: K stacked grayscale frames + the agent's last key state -> `outputs` values.
 
     Aim: outputs are (x, y) in [0, 1] capture-box coordinates. Click: outputs are logits (press, hold).
     """
 
-    def __init__(self, stack: int = 4, width: int = 32, outputs: int = 2, heads: list[int] | None = None, bounded_aim: bool = False):
+    def __init__(self, stack: int = 4, width: int = 32, outputs: int = 2, heads: list[int] | None = None, bounded_aim: bool = False, aim_head: str = "mlp"):
         """`heads`: output sizes of separate MLP heads on the shared trunk (e.g. [2, 2] for aim and click); None = one head.
-        `bounded_aim`: sigmoid on the first two outputs, for playfield-normalised aim targets."""
+        `bounded_aim`: sigmoid on the first two outputs, for playfield-normalised aim targets.
+        `aim_head`: "softargmax" replaces the first head with `SoftArgmaxAim` (needs `heads`)."""
         super().__init__()
         self.stack = stack
         self.bounded_aim = bounded_aim
+        self.aim_head = aim_head
         self.head_sizes = list(heads) if heads else None
         self.features = nn.Sequential(
             ConvBlock(stack, width, 2),
@@ -40,12 +73,22 @@ class FrameNet(nn.Module):
         def mlp(n: int) -> nn.Sequential:
             return nn.Sequential(nn.Linear(feat + 2, 512), nn.ReLU(inplace=True), nn.Dropout(0.2), nn.Linear(512, n))
 
-        if self.head_sizes:
+        if aim_head == "softargmax":
+            self.aim = SoftArgmaxAim(width * 4, width * 8, 2)
+            self.heads = nn.ModuleList(mlp(n) for n in self.head_sizes[1:])
+        elif self.head_sizes:
             self.heads = nn.ModuleList(mlp(n) for n in self.head_sizes)
         else:
             self.head = mlp(outputs)
 
-    def forward(self, frames: torch.Tensor, prev_keys: torch.Tensor) -> torch.Tensor:
+    def forward(self, frames: torch.Tensor, prev_keys: torch.Tensor, return_logits: bool = False):
+        if self.aim_head == "softargmax":
+            s8 = self.features[:6](frames)
+            s16 = self.features[6](s8)
+            f = torch.cat([self.features[7:](s16), prev_keys], dim=1)
+            aim, logits = self.aim(s8, s16, prev_keys)
+            out = torch.cat([aim.to(f.dtype)] + [h(f) for h in self.heads], dim=1)
+            return (out, logits) if return_logits else out
         f = torch.cat([self.features(frames), prev_keys], dim=1)
         out = torch.cat([h(f) for h in self.heads], dim=1) if self.head_sizes else self.head(f)
         if self.bounded_aim:
