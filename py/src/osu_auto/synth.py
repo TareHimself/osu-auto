@@ -87,7 +87,7 @@ class Generator:
         self.t = float(LEAD_IN_MS)
         self.pos = Histo2(np.linspace(0, W, 17), np.linspace(0, H, 13), self.rng)
         self.jump = Histo2(np.linspace(0, 600, 13), np.linspace(-math.pi, math.pi, 17), self.rng)
-        self.gap = Histo(np.linspace(60, 1000, 13), self.rng)
+        self.gap = Histo(np.geomspace(60, 900, 13), self.rng)
         self.slen = Histo(np.linspace(40, 600, 12), self.rng)
         self.svel = Histo(np.linspace(0.5, 3.0, 8), self.rng)
         self.spin = Histo(np.linspace(500, 4000, 8), self.rng)
@@ -96,17 +96,29 @@ class Generator:
         return self.objects[-1].end if self.objects else (W / 2, H / 2)
 
     def next_pos(self, gap: float) -> tuple[float, float]:
-        """A jump vector from the emptiest (distance, angle) bin that lands inside the field and within autoplay's reach."""
+        """The reachable (distance, angle) bin whose landing cell plus own count is lowest, so jumps and positions flatten together."""
         x0, y0 = self.last_end()
-        for _ in range(64):
-            d, a = self.jump.draw()
-            if d / gap > self.MAX_SPEED:
-                continue
-            x, y = x0 + d * math.cos(a), y0 + d * math.sin(a)
-            if 0 <= x <= W and 0 <= y <= H:
-                self.pos.counts[min(int(x / W * 16), 15), min(int(y / H * 12), 11)] += 1
-                return x, y
-        return self.pos.draw()
+        best, best_score = None, math.inf
+        jc = self.jump.counts + self.rng.random(self.jump.counts.shape) * 0.5
+        for i in range(jc.shape[0]):
+            for j in range(jc.shape[1]):
+                d = self.rng.uniform(self.jump.xe[i], self.jump.xe[i + 1])
+                a = self.rng.uniform(self.jump.ye[j], self.jump.ye[j + 1])
+                if d / gap > self.MAX_SPEED:
+                    continue
+                x, y = x0 + d * math.cos(a), y0 + d * math.sin(a)
+                if not (0 <= x <= W and 0 <= y <= H):
+                    continue
+                cx, cy = min(int(x / W * 16), 15), min(int(y / H * 12), 11)
+                score = jc[i, j] + 2 * self.pos.counts[cx, cy]
+                if score < best_score:
+                    best, best_score = (i, j, x, y, cx, cy), score
+        if best is None:
+            return self.pos.draw()
+        i, j, x, y, cx, cy = best
+        self.jump.counts[i, j] += 1
+        self.pos.counts[cx, cy] += 1
+        return x, y
 
     def circle(self, gap: float | None = None) -> HitObject:
         gap = self.gap.draw() if gap is None else gap
@@ -117,8 +129,8 @@ class Generator:
         self.objects.append(o)
         return o
 
-    def slider(self) -> HitObject:
-        gap = self.gap.draw()
+    def slider(self, gap: float | None = None) -> HitObject:
+        gap = self.gap.draw() if gap is None else gap
         self.t += gap
         x, y = self.next_pos(gap)
         length = self.slen.draw()
@@ -157,6 +169,53 @@ class Generator:
             if all(0 <= px <= W and 0 <= py <= H for px, py in pts):
                 return pts
         return [(min(max(x + length, 0), W), y)]
+
+    def chain(self) -> None:
+        """Sliders back to back with 30 to 150 ms between one's end and the next head: autoplay swaps keys without releasing."""
+        n = int(self.rng.integers(2, 7))
+        long = self.slen
+        self.slen = Histo(np.linspace(40, 220, 7), self.rng)
+        for _ in range(n):
+            self.slider(float(self.rng.uniform(30, 150)))
+        self.slen = long
+
+    def pattern(self) -> None:
+        """A shape jump: regular polygon, star, zigzag or cross at constant spacing and tempo, random size, rotation and position."""
+        kind = str(self.rng.choice(["polygon", "star", "zigzag", "cross"], p=[0.4, 0.2, 0.3, 0.1]))
+        spacing = float(self.rng.uniform(80, 320))
+        tempo = float(self.rng.uniform(max(90, spacing / self.MAX_SPEED), 360))
+        rot = self.rng.uniform(0, 2 * math.pi)
+        if kind == "polygon":
+            n = int(self.rng.integers(3, 7))
+            r = spacing / (2 * math.sin(math.pi / n))
+            pts = [(r * math.cos(rot + 2 * math.pi * k / n), r * math.sin(rot + 2 * math.pi * k / n)) for k in range(n)]
+            pts = pts * int(self.rng.integers(1, 3)) + pts[:1]
+        elif kind == "star":
+            n = 5
+            r = spacing / (2 * math.sin(2 * math.pi / n))
+            pts = [(r * math.cos(rot + 4 * math.pi * k / n), r * math.sin(rot + 4 * math.pi * k / n)) for k in range(n)] + [(r * math.cos(rot), r * math.sin(rot))]
+        elif kind == "zigzag":
+            n = int(self.rng.integers(4, 10))
+            pts = [((k % 2) * spacing * math.cos(rot), (k % 2) * spacing * math.sin(rot)) for k in range(n)]
+            drift = self.rng.uniform(0, 60)
+            pts = [(x + k * drift * math.cos(rot + math.pi / 2), y + k * drift * math.sin(rot + math.pi / 2)) for k, (x, y) in enumerate(pts)]
+        else:
+            r = spacing / 2
+            pts = [(r, 0), (-r, 0), (0, r), (0, -r), (r, 0)]
+            pts = [(x * math.cos(rot) - y * math.sin(rot), x * math.sin(rot) + y * math.cos(rot)) for x, y in pts]
+        xs, ys = zip(*pts)
+        w, h = max(xs) - min(xs), max(ys) - min(ys)
+        if w > W or h > H:
+            return
+        ox = self.rng.uniform(-min(xs), W - max(xs))
+        oy = self.rng.uniform(-min(ys), H - max(ys))
+        self.t += self.gap.draw()
+        for k, (x, y) in enumerate(pts):
+            o = HitObject(ox + x, oy + y, self.t)
+            o.end_t = self.t
+            self.objects.append(o)
+            if k + 1 < len(pts):
+                self.t += tempo
 
     def stream(self) -> None:
         n = int(self.rng.integers(3, 17))
@@ -199,15 +258,20 @@ class Generator:
         weights = {
             "jumps": {"circle": 1.0},
             "sliders": {"slider": 1.0},
+            "chains": {"chain": 0.7, "slider": 0.2, "circle": 0.1},
+            "patterns": {"pattern": 0.8, "circle": 0.2},
+            "spinners": {"spinner": 0.6, "circle": 0.2, "slider": 0.2},
             "streams": {"stream": 0.6, "stack": 0.4},
             "dense": {"circle": 0.5, "stack": 0.25, "stream": 0.25},
-            "mixed": {"circle": 0.45, "slider": 0.3, "stream": 0.1, "stack": 0.08, "spinner": 0.07},
+            "mixed": {"circle": 0.35, "slider": 0.22, "pattern": 0.1, "chain": 0.1, "stream": 0.08, "stack": 0.08, "spinner": 0.07},
         }[family]
         names, probs = list(weights), np.array(list(weights.values()))
+        if family == "spinners":
+            self.spin = Histo(np.linspace(1000, 8000, 8), self.rng)
+        if family == "dense":
+            self.gap = Histo(np.linspace(60, 250, 8), self.rng)
         while self.t < end:
             kind = str(self.rng.choice(names, p=probs / probs.sum()))
-            if family == "dense":
-                self.gap = Histo(np.linspace(60, 250, 8), self.rng)
             getattr(self, kind)()
 
     def osu_text(self, name: str, od: float = 8.0) -> str:

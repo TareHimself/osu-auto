@@ -1,0 +1,74 @@
+[
+  {
+    "map": "synthetic/patterns-cs3-ar8-s0.osz",
+    "diff": "patterns-cs3-ar8-s0",
+    "cs": 3.0,
+    "ar": 8.0,
+    "title": "synthetic patterns-cs3-ar8-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs3-ar9-s0.osz",
+    "diff": "patterns-cs3-ar9-s0",
+    "cs": 3.0,
+    "ar": 9.0,
+    "title": "synthetic patterns-cs3-ar9-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs3-ar10-s0.osz",
+    "diff": "patterns-cs3-ar10-s0",
+    "cs": 3.0,
+    "ar": 10.0,
+    "title": "synthetic patterns-cs3-ar10-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs4-ar8-s0.osz",
+    "diff": "patterns-cs4-ar8-s0",
+    "cs": 4.0,
+    "ar": 8.0,
+    "title": "synthetic patterns-cs4-ar8-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs4-ar9-s0.osz",
+    "diff": "patterns-cs4-ar9-s0",
+    "cs": 4.0,
+    "ar": 9.0,
+    "title": "synthetic patterns-cs4-ar9-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs4-ar10-s0.osz",
+    "diff": "patterns-cs4-ar10-s0",
+    "cs": 4.0,
+    "ar": 10.0,
+    "title": "synthetic patterns-cs4-ar10-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs5-ar8-s0.osz",
+    "diff": "patterns-cs5-ar8-s0",
+    "cs": 5.0,
+    "ar": 8.0,
+    "title": "synthetic patterns-cs5-ar8-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs5-ar9-s0.osz",
+    "diff": "patterns-cs5-ar9-s0",
+    "cs": 5.0,
+    "ar": 9.0,
+    "title": "synthetic patterns-cs5-ar9-s0",
+    "family": "patterns"
+  },
+  {
+    "map": "synthetic/patterns-cs5-ar10-s0.osz",
+    "diff": "patterns-cs5-ar10-s0",
+    "cs": 5.0,
+    "ar": 10.0,
+    "title": "synthetic patterns-cs5-ar10-s0",
+    "family": "patterns"
+  }
+]
