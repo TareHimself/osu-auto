@@ -12,7 +12,9 @@ using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Osu;
 using osu.Game.Rulesets.Osu.Objects;
 using osu.Game.Rulesets.Osu.Replays;
+using osu.Game.Scoring;
 using osu.Game.Scoring.Legacy;
+using osu.Game.Online.API.Requests.Responses;
 using OsuAuto.Host.Export;
 
 namespace OsuAuto.Host.Commands;
@@ -29,7 +31,7 @@ public static class ExportLabels
         Console.WriteLine($"exported -> {outDir}");
     }
 
-    public static async Task<string> Run(AutoHostGame game, string path, string? diff, string? osrPath, IReadOnlyList<string> modSpecs, string outRoot)
+    public static async Task<string> Run(AutoHostGame game, string path, string? diff, string? osrPath, IReadOnlyList<string> modSpecs, string outRoot, int spinRecoverySeed = -1)
     {
         var ruleset = new OsuRuleset();
         var info = await game.ImportBeatmap(path, diff).ConfigureAwait(false);
@@ -63,6 +65,13 @@ public static class ExportLabels
         replay ??= new OsuAutoGenerator(playable, mods).Generate();
 
         var objects = playable.HitObjects.OfType<OsuHitObject>().ToList();
+        var spinTracks = new List<SpinTrack>();
+
+        if (spinRecoverySeed >= 0 && osrPath == null)
+        {
+            (replay, spinTracks) = SpinRecovery.Apply(replay, objects, spinRecoverySeed);
+            source += $"-spinrec{spinRecoverySeed}";
+        }
         double t0 = objects[0].StartTime - lead_in_ms;
         double t1 = Math.Max(objects[^1].GetEndTime(), replay.Frames.Max(f => f.Time));
 
@@ -72,7 +81,16 @@ public static class ExportLabels
         string outDir = Path.Combine(outRoot, $"{info.MD5Hash}-{source}");
         Directory.CreateDirectory(outDir);
 
-        writeLabels(Path.Combine(outDir, "labels.npz"), samples);
+        writeLabels(Path.Combine(outDir, "labels.npz"), samples, spinTracks);
+        string? generatedOsr = null;
+
+        if (spinTracks.Count > 0)
+        {
+            generatedOsr = Path.GetFullPath(Path.Combine(outDir, "replay.osr"));
+            var scoreInfo = new ScoreInfo(info, ruleset.RulesetInfo) { Mods = mods.ToArray(), User = new APIUser { Username = "osu-auto" }, Date = DateTimeOffset.Now };
+            using var fs = File.Create(generatedOsr);
+            new LegacyScoreEncoder(new Score { ScoreInfo = scoreInfo, Replay = replay }, playable).Encode(fs);
+        }
         writeObjects(Path.Combine(outDir, "objects.npz"), objects);
 
         var meta = new
@@ -84,6 +102,8 @@ public static class ExportLabels
             mod_specs = modSpecs,
             source,
             osr = osrPath == null ? null : Path.GetFileName(osrPath),
+            osr_path = generatedOsr ?? (osrPath == null ? null : Path.GetFullPath(osrPath)),
+            spin_recovery_seed = spinRecoverySeed >= 0 ? spinRecoverySeed : (int?)null,
             t0_ms = t0,
             t1_ms = t1,
             step_ms,
@@ -145,9 +165,24 @@ public static class ExportLabels
         };
     }
 
-    private static void writeLabels(string path, List<LabelSample> samples)
+    private static void writeLabels(string path, List<LabelSample> samples, List<SpinTrack> spinTracks)
     {
         int n = samples.Count;
+        var tx = new float[n];
+        var ty = new float[n];
+
+        for (int i = 0; i < n; i++)
+        {
+            var target = new osuTK.Vector2(samples[i].X, samples[i].Y);
+            foreach (var track in spinTracks)
+            {
+                if (samples[i].TimeMs > track.StartMs && samples[i].TimeMs < track.EndMs)
+                    target = SpinRecovery.Target(track, target, step_ms);
+            }
+
+            tx[i] = target.X;
+            ty[i] = target.Y;
+        }
         var t = new double[n];
         var x = new float[n];
         var y = new float[n];
@@ -176,6 +211,8 @@ public static class ExportLabels
         npz.Add("k2", k2);
         npz.Add("press_k1", press1);
         npz.Add("press_k2", press2);
+        npz.Add("target_x", tx);
+        npz.Add("target_y", ty);
     }
 
     private static void writeObjects(string path, List<OsuHitObject> objects)

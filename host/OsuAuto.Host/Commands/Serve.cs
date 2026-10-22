@@ -217,7 +217,8 @@ public static class Serve
         {
             var mods = request.TryGetValue("mods", out object? m) && m is object[] list ? list.Select(o => (string)o).ToList() : new List<string>();
             string dir = await ExportLabels.Run(game, (string)request["map"], request.TryGetValue("diff", out object? d) ? d as string : null,
-                request.TryGetValue("osr", out object? o) ? o as string : null, mods, (string)request["out"]).ConfigureAwait(false);
+                request.TryGetValue("osr", out object? o) ? o as string : null, mods, (string)request["out"],
+                request.TryGetValue("spin_recovery", out object? sr) && sr != null ? Convert.ToInt32(sr) : -1).ConfigureAwait(false);
             return new Dictionary<string, object> { ["ok"] = true, ["dir"] = dir };
         }
 

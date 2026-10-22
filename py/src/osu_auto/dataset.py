@@ -35,6 +35,7 @@ class FrameExport:
     spinner: np.ndarray
     frames_meta: dict | None = None
     strain: np.ndarray | None = None
+    active: np.ndarray | None = None
     _frames: np.ndarray | None = None
 
     @property
@@ -84,6 +85,41 @@ def strain_per_frame(ex, t_ms: np.ndarray) -> np.ndarray | None:
     return out
 
 
+def active_mask(ex, t_ms: np.ndarray, down: np.ndarray, spinner: np.ndarray, press: np.ndarray, after_steps: int = 30) -> np.ndarray:
+    """Frames with something to do: an object in its approach window, a key held (slider), a spinner, or just after a press.
+    Everything else is lead-in or break and carries no signal."""
+    pre = preempt_ms(float(ex.meta["approach_rate"]))
+    active = np.zeros(len(t_ms), dtype=bool)
+    for s, e in zip(ex.objects.start_ms, ex.objects.end_ms):
+        lo, hi = np.searchsorted(t_ms, s - pre), np.searchsorted(t_ms, max(e, s), side="right")
+        active[lo:hi] = True
+    for i in np.flatnonzero(press > 0.5):
+        active[i:i + after_steps] = True
+    return (active | (down > 0.5) | spinner) & ~wrong_way_spins(ex, t_ms, spinner)
+
+
+SPIN_DIRECTION = -1.0
+
+
+def wrong_way_spins(ex, t_ms: np.ndarray, spinner: np.ndarray) -> np.ndarray:
+    """Frames inside spinners where the expert spins against SPIN_DIRECTION. Autoplay picks a direction per spinner; the model
+    is taught one direction only, so these frames are left out rather than relabelled (the rendered disc turns the other way)."""
+    L = ex.labels
+    x = (L.x if L.target_x is None else L.target_x)[:len(t_ms)] - 256.0
+    y = (L.y if L.target_y is None else L.target_y)[:len(t_ms)] - 192.0
+    out = np.zeros(len(t_ms), dtype=bool)
+    for s, e, k in zip(ex.objects.start_ms, ex.objects.end_ms, ex.objects.kind):
+        if k != KIND_SPINNER:
+            continue
+        idx = np.flatnonzero((t_ms > s) & (t_ms < e))
+        if len(idx) < 3:
+            continue
+        d = np.angle(np.exp(1j * np.diff(np.arctan2(y[idx], x[idx]))))
+        if np.sign(np.median(d)) != SPIN_DIRECTION:
+            out[idx] = True
+    return out
+
+
 def load_frame_export(path: str | Path) -> FrameExport:
     ex = load_export(path)
     fm = ex.meta["frames"]
@@ -95,7 +131,9 @@ def load_frame_export(path: str | Path) -> FrameExport:
     L = ex.labels
     cursor_xy = np.stack([np.array(area.playfield_to_capture(float(x), float(y)), dtype=np.float32) for x, y in zip(L.x[:n], L.y[:n])])
     target_xy = (cursor_xy / np.array([cap.w, cap.h], dtype=np.float32)).astype(np.float32)
-    target_pf = encode_playfield(np.stack([L.x[:n] / 512.0, L.y[:n] / 384.0], axis=1))
+    tx = L.x if L.target_x is None else L.target_x
+    ty = L.y if L.target_y is None else L.target_y
+    target_pf = encode_playfield(np.stack([tx[:n] / 512.0, ty[:n] / 384.0], axis=1))
     down = (L.k1[:n] | L.k2[:n]).astype(np.float32)
     press = (L.press_k1[:n] | L.press_k2[:n]).astype(np.float32)
     spinner = np.zeros(n, dtype=bool)
@@ -103,7 +141,8 @@ def load_frame_export(path: str | Path) -> FrameExport:
         if k == KIND_SPINNER:
             spinner[(L.t_ms[:n] >= s) & (L.t_ms[:n] <= e)] = True
     return FrameExport(ex.path, ex.path / fm["path"], n, cursor, int(fm["factor"]), (cap.w, cap.h), cursor_xy, L.t_ms[:n], target_xy, target_pf,
-                       L.k1[:n], L.k2[:n], L.press_k1[:n], L.press_k2[:n], down, press, spinner, fm, strain_per_frame(ex, L.t_ms[:n]))
+                       L.k1[:n], L.k2[:n], L.press_k1[:n], L.press_k2[:n], down, press, spinner, fm, strain_per_frame(ex, L.t_ms[:n]),
+                       active_mask(ex, L.t_ms[:n], down, spinner, press))
 
 
 class FrameStackDataset(Dataset):

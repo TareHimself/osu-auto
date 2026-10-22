@@ -1,6 +1,7 @@
 import argparse
 import json
 import queue
+import re
 import socket
 import subprocess
 import threading
@@ -66,11 +67,86 @@ class Host:
         self.log.close()
 
 
-def worker(i: int, jobs: "queue.Queue[tuple[dict, str, Path]]", args, results: list, log_dir: Path) -> None:
+def has_spinner(export_dir: Path) -> bool:
+    """Spinner visuals depend on how the spinner was spun before, so a seek-based determinism check cannot pass on them."""
+    import numpy as np
+
+    with np.load(export_dir / "objects.npz") as z:
+        return bool((z["kind"] == 2).any()) if "kind" in z.files else False
+
+
+class Progress:
+    """Shared export status, written to _logs/status.json once a second for `export_status` to display."""
+
+    def __init__(self, path: Path, total: int, wandb_project: str | None = None):
+        self.path = path
+        self.total = total
+        self.t0 = time.time()
+        self.lock = threading.Lock()
+        self.hosts: dict[int, dict] = {}
+        self.done = 0
+        self.failed = 0
+        self.frames = 0
+        self.failures: list[dict] = []
+        self.run = None
+        self._last = 0.0
+        if wandb_project:
+            import wandb
+
+            self.run = wandb.init(project=wandb_project, name=f"export-{time.strftime('%m%d-%H%M')}", job_type="export", group="exports", tags=["export"], config={"jobs": total})
+
+    def update(self, i: int, **fields) -> None:
+        with self.lock:
+            self.hosts.setdefault(i, {}).update(fields)
+        self.flush()
+
+    def finished(self, frames: int | None, error: str | None, name: str = "") -> None:
+        with self.lock:
+            if error:
+                self.failed += 1
+                self.failures.append({"map": name, "error": error.splitlines()[0][:200]})
+            else:
+                self.done += 1
+                self.frames += frames or 0
+        self.flush(force=True)
+
+    def flush(self, force: bool = False) -> None:
+        now = time.time()
+        if not force and now - self._last < 1.0:
+            return
+        self._last = now
+        with self.lock:
+            elapsed = now - self.t0
+            finished = self.done + self.failed
+            per_job = elapsed / finished if finished else None
+            snap = {"updated": now, "started": self.t0, "elapsed_s": elapsed, "total": self.total, "done": self.done, "failed": self.failed,
+                    "remaining": self.total - finished, "frames": self.frames, "frames_per_s": self.frames / max(elapsed, 1e-6),
+                    "eta_s": per_job * (self.total - finished) if per_job else None, "hosts": self.hosts, "failures": self.failures}
+        try:
+            self.path.write_text(json.dumps(snap, indent=1))
+        except OSError:
+            pass
+        if self.run:
+            self.run.log({"done": snap["done"], "failed": snap["failed"], "frames_per_s": snap["frames_per_s"]})
+
+    def close(self) -> None:
+        self.flush(force=True)
+        if self.run:
+            self.run.finish()
+
+
+def worker(i: int, jobs: "queue.Queue[tuple[dict, str, Path]]", args, results: list, log_dir: Path, progress: Progress) -> None:
     tag = f"[w{i}]"
 
     def log(msg: str) -> None:
         print(f"{tag} {time.strftime('%H:%M:%S')} {msg}", flush=True)
+        m = re.match(r"(\d+)/(\d+) t=\S+ ([\d.]+) steps/s", msg)
+        if m:
+            progress.update(i, stage="frames", step=int(m.group(1)), steps=int(m.group(2)), steps_per_s=float(m.group(3)))
+        elif msg.startswith("loaded "):
+            progress.update(i, stage="loading", step=0)
+        elif msg.startswith("self-check"):
+            progress.update(i, stage="self-check")
 
     host: Host | None = None
     try:
@@ -85,20 +161,26 @@ def worker(i: int, jobs: "queue.Queue[tuple[dict, str, Path]]", args, results: l
                 log(f"host with skin {Path(skin).stem}")
                 host = Host(i, skin, args, log_dir)
             started = time.perf_counter()
+            progress.update(i, map=f"{Path(job['map']).stem} [{job.get('diff') or 'lowest'}]", skin=Path(skin).stem, stage="labels", step=0, steps=0)
             try:
-                export_dir = Path(host.client.export_labels(map_path(job), str(out), diff=job.get("diff"), osr=job.get("osr"), mods=job.get("mods")))
+                export_dir = Path(host.client.export_labels(map_path(job), str(out), diff=job.get("diff"), osr=job.get("osr"), mods=job.get("mods"), spin_recovery=job.get("spin_recovery")))
+                osr = job.get("osr") or json.loads((export_dir / "meta.json").read_text()).get("osr_path")
                 log(f"labels -> {export_dir}")
                 done = json.loads((export_dir / "meta.json").read_text()).get("frames")
                 if done and (export_dir / done["path"]).exists():
                     log(f"already exported, skipping {export_dir.name}")
+                    progress.finished(0, None)
                     continue
-                fm = export_frames(host.client, map_path(job), export_dir, diff=job.get("diff"), osr=job.get("osr"), mods=job.get("mods"), size=args.size_wh, limit=args.limit, log=log,
-                                   sprite=host.cursor_sprite(job))
+                fm = export_frames(host.client, map_path(job), export_dir, diff=job.get("diff"), osr=osr, mods=None if osr else job.get("mods"), size=args.size_wh, limit=args.limit, log=log,
+                                   sprite=host.cursor_sprite(job), strict=not has_spinner(export_dir))
                 results.append({"job": job, "skin": skin, "export": str(export_dir), "frames": fm["count"], "steps_per_s": fm["steps_per_s"], "seconds": time.perf_counter() - started})
+                progress.finished(fm["count"], None)
             except Exception as e:
                 log(f"FAILED {job}: {e}")
                 results.append({"job": job, "skin": skin, "error": str(e)})
+                progress.finished(None, str(e), f"{Path(job['map']).stem} [{job.get('diff') or 'lowest'}]")
     finally:
+        progress.update(i, stage="idle", map="")
         if host is not None:
             host.close()
 
@@ -112,6 +194,7 @@ def main() -> None:
     p.add_argument("--window", default="640x480")
     p.add_argument("--size", default="160x120")
     p.add_argument("--limit", type=int, default=None, help="only export the first N steps of each job (benchmarks)")
+    p.add_argument("--wandb", default=None, help="log progress of this batch to a wandb project")
     args = p.parse_args()
     args.size_wh = tuple(int(v) for v in args.size.split("x"))
 
@@ -127,12 +210,14 @@ def main() -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict] = []
     t0 = time.perf_counter()
+    progress = Progress(log_dir / "status.json", jobs.qsize(), args.wandb)
 
-    threads = [threading.Thread(target=worker, args=(i, jobs, args, results, log_dir), daemon=True) for i in range(min(args.workers, jobs.qsize()))]
+    threads = [threading.Thread(target=worker, args=(i, jobs, args, results, log_dir, progress), daemon=True) for i in range(min(args.workers, jobs.qsize()))]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+    progress.close()
 
     total = time.perf_counter() - t0
     frames = sum(r.get("frames", 0) for r in results)

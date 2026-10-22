@@ -50,13 +50,16 @@ class HostClient:
             kwargs["osr"] = osr
         return self.call("load", **kwargs)
 
-    def export_labels(self, map_path: str, out_root: str, diff: str | None = None, osr: str | None = None, mods: list[str] | None = None) -> str:
+    def export_labels(self, map_path: str, out_root: str, diff: str | None = None, osr: str | None = None, mods: list[str] | None = None,
+                      spin_recovery: int | None = None) -> str:
         """Write labels.npz, objects.npz and meta.json for the map in this host; returns the export directory."""
         kwargs = {"map": map_path, "out": out_root, "mods": list(mods or [])}
         if diff:
             kwargs["diff"] = diff
         if osr:
             kwargs["osr"] = osr
+        if spin_recovery is not None:
+            kwargs["spin_recovery"] = int(spin_recovery)
         return self.call("export_labels", **kwargs)["dir"]
 
     def backdrop(self, visible: bool) -> None:

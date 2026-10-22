@@ -92,7 +92,7 @@ def self_check(host: HostClient, export: Export, sprite: CursorSprite, area: Pla
 
 def export_frames(host: HostClient, map_path: str, export_dir: str | Path, diff: str | None = None, osr: str | None = None,
                   mods: list[str] | None = None, size: tuple[int, int] = (160, 120), limit: int | None = None, log=print,
-                  sprite: CursorSprite | None = None) -> dict:
+                  sprite: CursorSprite | None = None, strict: bool = True) -> dict:
     export = load_export(export_dir)
     labels = export.labels
     w, h = size
@@ -110,7 +110,9 @@ def export_frames(host: HostClient, map_path: str, export_dir: str | Path, diff:
     checks = self_check(host, export, sprite, area, size, factor)
     log(f"self-check: {json.dumps(checks)}")
     if checks["same_time_diff"] >= 1:
-        raise RuntimeError("readback is not deterministic across seeks")
+        if strict:
+            raise RuntimeError("readback is not deterministic across seeks")
+        log("warning: readback differs across seeks (spinner state depends on history); export walks forward only, so kept")
     if checks["gray_parity"] >= 1:
         raise RuntimeError("host grayscale path disagrees with cv2")
     if checks["composite_mean_diff"] > max(0.5, checks["cursor_effect"] * 0.25):

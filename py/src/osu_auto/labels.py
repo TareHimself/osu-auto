@@ -18,6 +18,8 @@ class Labels:
     k2: np.ndarray
     press_k1: np.ndarray
     press_k2: np.ndarray
+    target_x: np.ndarray | None = None
+    target_y: np.ndarray | None = None
 
     def __len__(self) -> int:
         return len(self.t_ms)
