@@ -168,7 +168,7 @@ def main() -> None:
     print(f"best -> {out_dir / 'joint_best.pt'}")
     if not args.no_onnx:
         try:
-            export_onnx(out_dir / "joint_best.pt")
+            export_onnx(out_dir / "joint_best.pt", frames_from=exports[-1].path)
         except Exception as e:
             print(f"onnx export failed: {e!r}; run python -m osu_auto.export_onnx {out_dir / 'joint_best.pt'}")
 
