@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from osu_auto.paths import BEATMAPS
 
@@ -312,11 +313,12 @@ def silent_wav(ms: float) -> bytes:
 
 
 def write_osz(name: str, osu: str, length_ms: float) -> Path:
+    """Fixed zip timestamps, so the same settings always give byte-identical files."""
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"{name}.osz"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr(f"osu-auto - synthetic {name} (osu-auto) [{name}].osu", osu)
-        z.writestr("audio.wav", silent_wav(length_ms + 3000))
+        for member, data in ((f"osu-auto - synthetic {name} (osu-auto) [{name}].osu", osu.encode()), ("audio.wav", silent_wav(length_ms + 3000))):
+            z.writestr(zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
     return path
 
 
@@ -331,23 +333,36 @@ def generate(family: str, cs: float, ar: float, seconds: float, seed: int) -> tu
     return path, name, {"objects": len(g.objects), "kinds": kinds, "seconds": round((g.t - LEAD_IN_MS) / 1000)}
 
 
+def run(families: str, cs: str, ar: str, seconds: float, seeds: int) -> list[dict]:
+    jobs = []
+    for family in families.split(","):
+        for c in (float(v) for v in str(cs).split(",")):
+            for a in (float(v) for v in str(ar).split(",")):
+                for seed in range(seeds):
+                    path, name, info = generate(family, c, a, seconds, seed)
+                    print(f"{path.name}: {info}")
+                    jobs.append({"map": f"synthetic/{path.name}", "diff": name, "cs": c, "ar": a, "title": f"synthetic {name}", "family": family})
+    return jobs
+
+
 def main() -> None:
-    p = argparse.ArgumentParser(description="Generate synthetic osu! beatmaps with flat position, jump and tempo distributions")
+    p = argparse.ArgumentParser(description="Generate synthetic osu! beatmaps with flat position, jump and tempo distributions. "
+                                            "With --config, every entry of the YAML's synth: list is one run of these flags.")
     p.add_argument("--families", default="jumps,sliders,streams,dense,mixed")
     p.add_argument("--cs", default="3,4,5")
     p.add_argument("--ar", default="8,9,10")
     p.add_argument("--seconds", type=float, default=90)
     p.add_argument("--seeds", type=int, default=1)
     p.add_argument("--jobs", default=None, help="write a job list (json) for export_jobs")
+    p.add_argument("--config", default=None, help="YAML file with a synth: list of runs")
     args = p.parse_args()
-    jobs = []
-    for family in args.families.split(","):
-        for cs in (float(v) for v in args.cs.split(",")):
-            for ar in (float(v) for v in args.ar.split(",")):
-                for seed in range(args.seeds):
-                    path, name, info = generate(family, cs, ar, args.seconds, seed)
-                    print(f"{path.name}: {info}")
-                    jobs.append({"map": f"synthetic/{path.name}", "diff": name, "cs": cs, "ar": ar, "title": f"synthetic {name}", "family": family})
+    if args.config:
+        runs = yaml.safe_load(Path(args.config).read_text())["synth"]
+        defaults = {k: v for k, v in vars(p.parse_args([])).items() if k in ("families", "cs", "ar", "seconds", "seeds")}
+        jobs = [j for r in runs for j in run(**{**defaults, **r})]
+    else:
+        jobs = run(args.families, args.cs, args.ar, args.seconds, args.seeds)
+    print(f"{len(jobs)} maps in {OUT}")
     if args.jobs:
         Path(args.jobs).write_text(json.dumps(jobs, indent=2))
         print(f"{len(jobs)} jobs -> {args.jobs}")
