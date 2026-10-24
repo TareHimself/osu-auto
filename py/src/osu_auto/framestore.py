@@ -57,20 +57,5 @@ def read_all(path: Path, meta: dict, into: np.ndarray | None = None, threads: in
     return out
 
 
-def read_range(path: Path, meta: dict, start: int, stop: int) -> np.ndarray:
-    hw = (int(meta["height"]), int(meta["width"]))
-    pieces = []
-    base = 0
-    for block in meta["blocks"]:
-        count = block[2]
-        if base + count > start and base < stop:
-            dec = _decode(path, block, hw)
-            pieces.append(dec[max(start - base, 0):min(stop - base, count)])
-        base += count
-        if base >= stop:
-            break
-    return np.concatenate(pieces) if pieces else np.empty((0, *hw), dtype=np.uint8)
-
-
 def frames_meta(export_dir: Path) -> dict:
     return json.loads((export_dir / "meta.json").read_text())["frames"]

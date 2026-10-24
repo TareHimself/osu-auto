@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from osu_auto.paths import DATA
 from osu_auto.capture import WindowCapture
 from osu_auto.host import HostClient
 from osu_auto.labels import load_export
@@ -15,7 +16,7 @@ def main() -> None:
     p.add_argument("map_path")
     p.add_argument("--export", required=True)
     p.add_argument("--diff")
-    p.add_argument("--out", default="F:/osu-auto/data/capture_check")
+    p.add_argument("--out", default=str(DATA / "capture_check"))
     p.add_argument("--times", type=float, nargs="*", default=None, help="ms times to capture; default: a few object starts")
     args = p.parse_args()
 

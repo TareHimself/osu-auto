@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-
 
 class Tracker:
     def __init__(self, project: str | None, name: str | None, config: dict, out_dir: Path):

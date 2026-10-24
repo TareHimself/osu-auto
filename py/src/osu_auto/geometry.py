@@ -58,16 +58,7 @@ class PlayArea:
         pf = self.playfield
         return pf.x + x * self.scale, pf.y + y * self.scale
 
-    def window_to_playfield(self, px: float, py: float) -> tuple[float, float]:
-        pf = self.playfield
-        return (px - pf.x) / self.scale, (py - pf.y) / self.scale
-
     def playfield_to_capture(self, x: float, y: float) -> tuple[float, float]:
         wx, wy = self.playfield_to_window(x, y)
         cap = self.capture
         return wx - cap.x, wy - cap.y
-
-    def playfield_to_capture_normalised(self, x: float, y: float) -> tuple[float, float]:
-        cx, cy = self.playfield_to_capture(x, y)
-        cap = self.capture
-        return cx / cap.w, cy / cap.h

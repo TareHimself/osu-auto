@@ -8,15 +8,15 @@ import threading
 import time
 from pathlib import Path
 
+from osu_auto.config import parse_args as parse_with_config
 from osu_auto.cursor import CursorSprite
 from osu_auto.export_frames import calibrate_cursor, export_frames
 from osu_auto.geometry import PlayArea
 from osu_auto.host import HostClient
+from osu_auto.paths import BEATMAPS, DATA, DEFAULT_SKIN, ROOT
 
-ROOT = Path(__file__).resolve().parents[3]
 HOST_EXE = ROOT / "host/OsuAuto.Host/bin/Release/net10.0/OsuAuto.Host.exe"
 HOST_CWD = ROOT / "host"
-BEATMAPS = ROOT / "data/beatmaps"
 
 
 def map_path(job: dict) -> str:
@@ -169,6 +169,7 @@ def worker(i: int, jobs: "queue.Queue[tuple[dict, str, Path]]", args, results: l
                 done = json.loads((export_dir / "meta.json").read_text()).get("frames")
                 if done and (export_dir / done["path"]).exists():
                     log(f"already exported, skipping {export_dir.name}")
+                    results.append({"job": job, "skin": skin, "export": str(export_dir), "skipped": True})
                     progress.finished(0, None)
                     continue
                 fm = export_frames(host.client, map_path(job), export_dir, diff=job.get("diff"), osr=osr, mods=None if osr else job.get("mods"), size=args.size_wh, limit=args.limit, log=log,
@@ -187,19 +188,22 @@ def worker(i: int, jobs: "queue.Queue[tuple[dict, str, Path]]", args, results: l
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Export labels and frames for a list of (map, diff, mods) jobs across parallel host processes")
-    p.add_argument("jobs", help="json file: list of {map (file name under data/beatmaps), diff?, osr?, mods?: [spec, ...]}")
+    p.add_argument("jobs", nargs="?", help="json file: list of {map (file name under data/beatmaps), diff?, osr?, mods?: [spec, ...]}")
     p.add_argument("--workers", type=int, default=4)
-    p.add_argument("--out", default=str(ROOT / "data/exports"))
+    p.add_argument("--out", default=str(DATA / "exports"))
     p.add_argument("--skin", action="append", help="skin .osk; repeat for several skins, exports then go to --out/<skin name>/")
     p.add_argument("--window", default="640x480")
-    p.add_argument("--size", default="160x120")
+    p.add_argument("--size", default="320x240", help="exported frame size; training pools it down by --pool (2 gives 160x120)")
     p.add_argument("--limit", type=int, default=None, help="only export the first N steps of each job (benchmarks)")
     p.add_argument("--wandb", default=None, help="log progress of this batch to a wandb project")
-    args = p.parse_args()
+    p.add_argument("--list", default=None, help="write the exports of jobs that succeeded in every skin to this file, for train_joint")
+    args = parse_with_config(p, "export", path_keys=("jobs", "out", "skin", "list"))
+    if not args.jobs:
+        p.error("no job list given")
     args.size_wh = tuple(int(v) for v in args.size.split("x"))
 
     jobs_list = json.loads(Path(args.jobs).read_text())
-    skins = args.skin or [str(ROOT / "data/skins/angelmegumin-ai-friendly.osk")]
+    skins = args.skin or [str(DEFAULT_SKIN)]
     jobs: "queue.Queue[tuple[dict, str, Path]]" = queue.Queue()
     for skin in skins:
         out = Path(args.out) / Path(skin).stem if len(skins) > 1 else Path(args.out)
@@ -225,8 +229,17 @@ def main() -> None:
     for r in results:
         j = r["job"]
         name = f"{Path(j['map']).stem} [{j.get('diff') or 'lowest'}] {'+'.join(j.get('mods') or [])} {Path(r['skin']).stem}"
-        print(f"  {name}: " + (f"{r['frames']} frames, {r['steps_per_s']:.0f} steps/s, {r['seconds']:.0f} s" if "frames" in r else f"FAILED {r['error']}"))
+        status = "already exported" if r.get("skipped") else f"FAILED {r['error']}" if "error" in r else f"{r['frames']} frames, {r['steps_per_s']:.0f} steps/s, {r['seconds']:.0f} s"
+        print(f"  {name}: {status}")
     (log_dir / "last_run.json").write_text(json.dumps(results, indent=2))
+    if args.list:
+        by_job: dict[str, dict[str, str]] = {}
+        for r in results:
+            if "export" in r:
+                by_job.setdefault(json.dumps(r["job"], sort_keys=True), {})[r["skin"]] = r["export"]
+        keep = [e for exports in by_job.values() if len(exports) == len(skins) for e in exports.values()]
+        Path(args.list).write_text("".join(f"{e}\n" for e in keep))
+        print(f"{len(keep)} exports ({len(keep) // len(skins)} jobs in all {len(skins)} skins) -> {args.list}")
 
 
 if __name__ == "__main__":

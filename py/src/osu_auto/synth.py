@@ -13,8 +13,9 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / "data/beatmaps/synthetic"
+from osu_auto.paths import BEATMAPS
+
+OUT = BEATMAPS / "synthetic"
 W, H = 512, 384
 LEAD_IN_MS = 2000
 NEW_COMBO = 4

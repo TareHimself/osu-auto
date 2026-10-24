@@ -50,14 +50,6 @@ std::string json_escape(const std::string& s) {
     return out;
 }
 
-std::string narrow(const std::wstring& w) {
-    std::string out(w.size(), '?');
-    for (size_t i = 0; i < w.size(); ++i) {
-        if (w[i] < 128) out[i] = static_cast<char>(w[i]);
-    }
-    return out;
-}
-
 // Wakes shortly before the deadline on a high resolution timer, then spins the rest
 class Waiter {
 public:

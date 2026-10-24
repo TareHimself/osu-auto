@@ -10,8 +10,9 @@ import numpy as np
 import torch
 
 from .dataset import load_frame_export
-from .eval_click import KeyExecutor
-from .models import FrameNet
+from .keys import KeyExecutor
+from .models import load_checkpoint
+from .paths import MODELS
 from .play import OneEuro
 from .targets import AIM_HI, AIM_LO, PLAYFIELD_H, PLAYFIELD_W
 
@@ -20,15 +21,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("export")
     ap.add_argument("out")
-    ap.add_argument("--model", default="data/models/joint_v3_spin3/joint_best.pt")
+    ap.add_argument("--model", default=str(MODELS / "joint_v3_spin3/joint_best.pt"))
     ap.add_argument("--start", type=int, default=2000)
     ap.add_argument("--ticks", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    ck = torch.load(args.model, map_location="cpu")
-    model = FrameNet(stack=ck["stack"], width=ck["width"], outputs=ck.get("outputs", 2), heads=ck.get("heads"), bounded_aim=ck.get("bounded_aim", False)).eval()
-    model.load_state_dict(ck["model"])
+    model, ck = load_checkpoint(args.model)
     offsets = ck.get("offsets") or list(range(ck["stack"]))
     steps = list(reversed(offsets))
     latency_max = float(ck.get("latency_max_ms", 0.0))

@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import TracebackType
 
 import msgpack
+import numpy as np
 import zmq
 
 
@@ -11,7 +12,6 @@ class HostError(RuntimeError):
 
 
 def _box(pixels: bytes, width: int, height: int) -> "np.ndarray":
-    import numpy as np
 
     return np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 4)
 
@@ -67,8 +67,7 @@ class HostClient:
 
     def export_frames(self, times, width: int, height: int) -> tuple["np.ndarray", "np.ndarray"]:
         """Seek to each time with the host rendering and downsampling in-process: returns (gray frames n x h x w, clock_ms per frame)."""
-        import numpy as np
-
+    
         r = self.call("export_frames", t=[float(t) for t in times], width=int(width), height=int(height))
         return np.frombuffer(r["frames"], dtype=np.uint8).reshape(len(times), height, width), np.asarray(r["clocks"], dtype=np.float64)
 

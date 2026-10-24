@@ -5,9 +5,9 @@ import json
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
 
-ROOT = Path(__file__).resolve().parents[3]
+from osu_auto.paths import ROOT
+from tkinter import ttk
 
 
 def newest_status() -> Path | None:

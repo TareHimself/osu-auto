@@ -1,5 +1,4 @@
 import argparse
-import io
 import json
 import re
 import urllib.request
@@ -7,8 +6,8 @@ import zipfile
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-BEATMAPS = ROOT / "data/beatmaps"
+from osu_auto.paths import BEATMAPS
+
 MIRROR = "https://osu.direct/api"
 USER_AGENT = "osu-auto/0.1 (github.com/TareHimself)"
 
@@ -68,21 +67,6 @@ def pick(cands: list[dict], count: int, per_set: int = 1, per_cell: int = 1) -> 
     return chosen
 
 
-def jump_scores(osz: Path) -> dict[str, float]:
-    """Per difficulty: 90th percentile distance (osu! pixels) between consecutive objects that are at most 250 ms apart."""
-    return {k: v[0] for k, v in diff_scores(osz).items()}
-
-
-def spinner_scores(osz: Path) -> dict[str, float]:
-    """Per difficulty: fraction of the map's length spent inside spinners."""
-    return {k: v[1] for k, v in diff_scores(osz).items()}
-
-
-def stream_scores(osz: Path) -> dict[str, float]:
-    """Per difficulty: fraction of consecutive objects under 100 ms apart at short spacing (streams)."""
-    return {k: v[2] for k, v in diff_scores(osz).items()}
-
-
 def diff_scores(osz: Path) -> dict[str, tuple[float, float, float]]:
     """Per difficulty: (jump p90 spacing in px, spinner time fraction, stream fraction)."""
     import numpy as np
@@ -136,6 +120,16 @@ def download(set_id: int) -> Path:
     return path
 
 
+def fetch_jobs(jobs_path: str) -> None:
+    """Download every ranked map a job list names that is not in data/beatmaps yet. Synthetic maps are in the repo."""
+    names = sorted({j["map"] for j in json.loads(Path(jobs_path).read_text()) if not j["map"].startswith("synthetic/")})
+    for name in names:
+        if not (BEATMAPS / name).exists():
+            print(f"downloading {name}")
+            download(int(Path(name).stem))
+    print(f"{len(names)} ranked maps in {BEATMAPS}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Pick ranked maps that cover a grid of star rating, circle size and approach rate, download them, and write a job list")
     p.add_argument("--count", type=int, default=12)
@@ -152,7 +146,11 @@ def main() -> None:
     p.add_argument("--streams", type=int, default=0, help="download this many candidate sets, score diffs by stream density, keep the top --count")
     p.add_argument("--download", action="store_true")
     p.add_argument("--jobs", default=None, help="write the job list here (json)")
+    p.add_argument("--fetch", default=None, help="instead of picking, download the maps of an existing job list")
     args = p.parse_args()
+    if args.fetch:
+        fetch_jobs(args.fetch)
+        return
 
     rng = lambda s: tuple(float(v) for v in s.split(","))
     sets = search(args.pages)

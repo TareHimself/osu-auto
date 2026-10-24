@@ -3,16 +3,17 @@ import json
 import shutil
 from pathlib import Path
 
-FILES = ("joint_best.onnx", "joint_best.onnx.data", "joint_best.json")
+from osu_auto.paths import MODELS
+
+FILES = ("joint_best.pt", "joint_best.onnx", "joint_best.onnx.data", "joint_best.json")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Make a run's ONNX export the runner's default model (data/models/current).")
     ap.add_argument("run", help="run folder under data/models, or a path to it")
-    ap.add_argument("--models", default="../data/models")
     args = ap.parse_args()
 
-    models = Path(args.models)
+    models = MODELS
     run = Path(args.run) if Path(args.run).is_dir() else models / args.run
     missing = [f for f in FILES if not (run / f).exists()]
     if missing:

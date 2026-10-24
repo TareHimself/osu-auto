@@ -154,7 +154,7 @@ def main() -> None:
     p.add_argument("--diff")
     p.add_argument("--osr")
     p.add_argument("--mods", default="", help="semicolon-separated mod specs, e.g. 'HD;DA:circle_size=4'")
-    p.add_argument("--size", default="160x120", help="stored frame size WxH, 4:3")
+    p.add_argument("--size", default="320x240", help="stored frame size WxH, 4:3")
     p.add_argument("--limit", type=int, default=None, help="only export the first N steps")
     p.add_argument("--endpoint", default="tcp://127.0.0.1:5555")
     args = p.parse_args()

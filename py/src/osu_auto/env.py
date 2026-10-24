@@ -78,18 +78,6 @@ class OsuEnv:
             obs = self._observe_capture(before)
         return StepResult(obs, self.t, float(r["clock_ms"]), dict(r.get("hits", {})), int(r["combo"]), float(r["accuracy"]), int(r["score"]), bool(r["completed"]))
 
-    def observe_without_cursor(self) -> np.ndarray:
-        """Capture the current state with the gameplay cursor hidden, then restore it."""
-        w, h = self.obs_size
-        self.host.cursor(False, wait=True)
-        if self.cap is None:
-            obs = self.host.export_frames([self.t], w, h)[0][0]
-        else:
-            before = self.cap.count
-            obs = self._observe_capture(before)
-        self.host.cursor(True, wait=False)
-        return obs
-
     @property
     def done(self) -> bool:
         return self.t >= self.t1

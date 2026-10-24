@@ -1,4 +1,4 @@
-"""Play osu! from the screen: capture a game window, run the aim and click models, inject mouse and keys.
+"""Play osu! from the screen in Python: capture a game window, run the model, inject mouse and keys. The native runner in play/ does the same with steadier timing.
 
 Start it, pick the osu! window, press Start (or F8 in the game). F8 toggles, F9 stops. The game must have the AI-friendly
 skin, 100% background dim, beatmap skins and colours off, hit lighting off, no cursor trail, HUD hidden, and raw input off.
@@ -23,13 +23,13 @@ import torch
 import win32gui
 
 from osu_auto.capture import WindowCapture
-from osu_auto.eval_click import KeyExecutor
+from osu_auto.keys import KeyExecutor
 from windows_capture import Frame, InternalCaptureControl
-from osu_auto.models import FrameNet
+from osu_auto.models import load_checkpoint
+from osu_auto.paths import DATA, MODELS
 from osu_auto.targets import decode_to_playfield
 
-ROOT = __import__("pathlib").Path(__file__).resolve().parents[3]
-LOG_DIR = ROOT / "data/play_logs"
+LOG_DIR = DATA / "play_logs"
 STEP_MS = 10.0
 HOTKEY_TOGGLE, HOTKEY_STOP = 1, 2
 VK_F8, VK_F9 = 0x77, 0x78
@@ -168,7 +168,7 @@ class OneEuro:
 
 
 class Player:
-    def __init__(self, hwnd: int, aim_path: str, click_path: str, log=print, inject: bool = True, buttons: str = "keyboard", keys: str = "zx",
+    def __init__(self, hwnd: int, model_path: str, log=print, inject: bool = True, buttons: str = "keyboard", keys: str = "zx",
                  smooth_cutoff: float = 2.0, smooth_beta: float = 0.05, latency_extra: float = 8.0, smooth_dcut: float = 10.0, dump_frames: str | None = None, dump_ticks: int = 2000):
         self.smooth_args = (0.01, smooth_cutoff, smooth_beta, smooth_dcut)
         self.smooth = OneEuro(*self.smooth_args)
@@ -182,13 +182,10 @@ class Player:
         self.use_mouse_buttons = buttons == "mouse"
         self.scans = [Injector.scan_code(keys[0]), Injector.scan_code(keys[1])]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.aim_path = aim_path
-        self.aim, aim_ck = self._load(aim_path)
-        self.aim_ck = aim_ck
-        self.joint = bool(aim_ck.get("joint"))
-        self.click = None if self.joint else self._load(click_path)[0]
-        self.h, self.w = aim_ck["frame_hw"]
-        self.stack_n = aim_ck["stack"]
+        self.model_path = model_path
+        self.model, ck = load_checkpoint(model_path, self.device)
+        self.h, self.w = ck["frame_hw"]
+        self.stack_n = ck["stack"]
         self.ring = FrameRing()
         self.cap = ObsCapture(hwnd, self.ring, (self.w, self.h))
         self.inject = Injector()
@@ -199,30 +196,22 @@ class Player:
         self.logfile = open(LOG_DIR / f"play-{time.strftime('%Y%m%d-%H%M%S')}.jsonl", "a")
         self.stats = {"capture_fps": 0.0, "loop_ms": 0.0, "frame_age_ms": 0.0, "presses": 0, "ticks": 0, "target": (0, 0), "p_press": 0.0, "p_down": 0.0, "tick_gap_max_ms": 0.0, "frame_age_max_ms": 0.0, "infer_max_ms": 0.0}
         self.zeros = torch.zeros(1, 2, device=self.device)
-        self.latency_max = float(aim_ck.get("latency_max_ms", 0.0))
-        self.offsets = aim_ck.get("offsets")
+        self.latency_max = float(ck.get("latency_max_ms", 0.0))
+        self.offsets = ck.get("offsets")
         self.last_infer_ms = 1.0
         self.trace: list[tuple] = []
         self.trace_path = LOG_DIR / f"play-{time.strftime('%Y%m%d-%H%M%S')}-trace.npz"
-        self.event("init", model=aim_path, click=None if self.joint else click_path, window=win32gui.GetWindowText(hwnd),
+        self.event("init", model=model_path, window=win32gui.GetWindowText(hwnd),
                    client=[self.cap.client.x, self.cap.client.y, self.cap.client.w, self.cap.client.h] if hasattr(self.cap, "client") else None,
                    smooth_cutoff=smooth_cutoff, smooth_beta=smooth_beta, smooth_dcut=smooth_dcut, latency_extra=latency_extra, latency_max=self.latency_max, offsets=self.offsets)
         ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00000080)
         warm = torch.zeros(1, self.stack_n, self.h, self.w, device=self.device)
         with torch.no_grad():
             for _ in range(20):
-                self.aim(warm, self.zeros)
-                if self.click is not None:
-                    self.click(warm, self.zeros)
+                self.model(warm, self.zeros)
         if self.device.type == "cuda":
             torch.cuda.synchronize()
         threading.Thread(target=self._run, daemon=True).start()
-
-    def _load(self, path: str):
-        ck = torch.load(path, map_location=self.device)
-        m = FrameNet(stack=ck["stack"], width=ck["width"], outputs=ck.get("outputs", 2), heads=ck.get("heads"), bounded_aim=ck.get("bounded_aim", False), aim_head=ck.get("aim_head", "mlp")).to(self.device).eval()
-        m.load_state_dict(ck["model"])
-        return m, ck
 
     def _run(self) -> None:
         ctypes.windll.kernel32.SetThreadPriority(ctypes.windll.kernel32.GetCurrentThread(), 2)
@@ -258,16 +247,12 @@ class Player:
                     self.stats["latency_ms"] = latency_ms
                 t_inf = time.perf_counter()
                 with torch.no_grad():
-                    if self.joint:
-                        o = self.aim(x, aux)[0]
-                        nx, ny = o[:2].tolist()
-                        p_press, p_down = torch.sigmoid(o[2:]).tolist()
-                    else:
-                        nx, ny = self.aim(x, self.zeros)[0].tolist()
-                        p_press, p_down = torch.sigmoid(self.click(x, self.zeros))[0].tolist()
+                    o = self.model(x, aux)[0]
+                nx, ny = o[:2].tolist()
+                p_press, p_down = torch.sigmoid(o[2:]).tolist()
                 self.last_infer_ms = (time.perf_counter() - t_inf) * 1000
                 infer_max = max(infer_max, self.last_infer_ms)
-                px, py = self.smooth(decode_to_playfield(nx, ny, self.aim_ck, self.cap.area))
+                px, py = self.smooth(decode_to_playfield(nx, ny))
                 wx, wy = self.cap.area.playfield_to_window(px, py)
                 sx, sy = self.cap.client.x + wx, self.cap.client.y + wy
                 before = (self.keys.down, self.keys.key)
@@ -403,7 +388,7 @@ def gui(args) -> None:
                 log("no window selected")
                 return
             hwnd = items[combo.current()][0]
-            state["player"] = Player(hwnd, args.model, args.click, log, buttons=args.buttons, keys=args.keys, smooth_cutoff=args.smooth_cutoff, smooth_beta=args.smooth_beta, latency_extra=args.latency_extra, smooth_dcut=args.smooth_dcut, dump_frames=args.dump_frames, dump_ticks=args.dump_ticks)
+            state["player"] = Player(hwnd, args.model, log, buttons=args.buttons, keys=args.keys, smooth_cutoff=args.smooth_cutoff, smooth_beta=args.smooth_beta, latency_extra=args.latency_extra, smooth_dcut=args.smooth_dcut, dump_frames=args.dump_frames, dump_ticks=args.dump_ticks)
             state["title"] = items[combo.current()][1]
             root.after(500, lambda: state["player"].start())
         else:
@@ -426,7 +411,7 @@ def gui(args) -> None:
         if p:
             s = p.stats
             lines = [
-                f"agent      {'ON' if p.active else 'off'}   model {'unified' if p.joint else 'aim+click'}   inject {'on' if p.inject_enabled else 'off'}",
+                f"agent      {'ON' if p.active else 'off'}   model {Path(p.model_path).parent.name}   inject {'on' if p.inject_enabled else 'off'}",
                 f"window     {state.get('title', '')}",
                 f"client     {int(p.cap.client.w)}x{int(p.cap.client.h)} at ({int(p.cap.client.x)}, {int(p.cap.client.y)})",
                 f"capture    {s['capture_fps']:.0f} fps   frame age {s['frame_age_ms']:.1f} ms",
@@ -465,7 +450,7 @@ def headless(args) -> None:
     items = list_windows(args.filter)
     if not items:
         raise SystemExit(f"no window matching '{args.filter}'")
-    p = Player(items[0][0], args.model, args.click, inject=not args.no_inject, buttons=args.buttons, keys=args.keys, smooth_cutoff=args.smooth_cutoff, smooth_beta=args.smooth_beta, latency_extra=args.latency_extra, smooth_dcut=args.smooth_dcut, dump_frames=args.dump_frames, dump_ticks=args.dump_ticks)
+    p = Player(items[0][0], args.model, inject=not args.no_inject, buttons=args.buttons, keys=args.keys, smooth_cutoff=args.smooth_cutoff, smooth_beta=args.smooth_beta, latency_extra=args.latency_extra, smooth_dcut=args.smooth_dcut, dump_frames=args.dump_frames, dump_ticks=args.dump_ticks)
     time.sleep(1.0)
     p.start()
     t_end = time.perf_counter() + args.duration
@@ -479,8 +464,7 @@ def headless(args) -> None:
 def main() -> None:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--model", default=str(ROOT / "data/models/joint_v3_att_cw/joint_best.pt"), help="unified checkpoint (x, y, press, down), or an aim-only checkpoint used together with --click")
-    ap.add_argument("--click", default=str(ROOT / "data/models/click_grid_h1/click_best.pt"))
+    ap.add_argument("--model", default=str(MODELS / "current/joint_best.pt"), help="checkpoint (outputs x, y, press, down)")
     ap.add_argument("--filter", default="osu!", help="window title prefix")
     ap.add_argument("--smooth-cutoff", type=float, default=2.0, help="1 euro filter minimum cutoff in Hz for the aim output; 0 disables smoothing")
     ap.add_argument("--latency-extra", type=float, default=8.0, help="ms added to the measured frame age and inference time before it is fed to the model: injection, capture and display delay. Raise it if hits land late")

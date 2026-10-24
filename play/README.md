@@ -10,14 +10,14 @@ Windows only, x64, an NVIDIA GPU for CUDA (or `--cpu`), lazer in windowed or bor
 uv run --project play/shell silo profile detect     # once per machine, finds MSVC
 ```
 
-Export the model you want to run (from `py/`, this writes `joint_best.onnx`, `joint_best.onnx.data` and `joint_best.json` next to the checkpoint):
+Pick the model to run (from `py/`). Training already writes the ONNX export next to the checkpoint; if a run lacks it, run `uv run python -m osu_auto.export_onnx ../data/models/<run>/joint_best.pt` first.
 
 ```
 cd py
-PYTHONUTF8=1 uv run python -m osu_auto.export_onnx ../data/models/joint_v3_spin3/joint_best.pt
+uv run python -m osu_auto.promote joint_v3_skins3
 ```
 
-`joint_v3_spin3` is the best for spinners, `joint_v3_lat2` for clicks.
+This copies the run's `joint_best.onnx`, weights and json into `data/models/current/`, which is what the runner loads by default.
 
 ## Play
 
@@ -27,7 +27,7 @@ From the repo root:
 uv run --project play/shell silo run -C play/shell runner play
 ```
 
-With no model path it loads `data/models/current/joint_best.onnx` and prints which run that is. Put a trained run there with `python -m osu_auto.promote <run>` (from `py/`). To run something else, pass the path: `runner play data/models/joint_v3_spin3/joint_best.onnx`.
+With no model path it loads `data/models/current/joint_best.onnx` and prints which run that is. Put a trained run there with `python -m osu_auto.promote <run>` (from `py/`). To run something else, pass the path: `runner play data/models/<run>/joint_best.onnx`.
 
 The first run builds the runner and downloads onnxruntime, cuDNN and cuBLAS (about 2 GB, cached by silo). Later runs start straight away.
 

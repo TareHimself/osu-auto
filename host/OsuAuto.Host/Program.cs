@@ -6,7 +6,7 @@ using OsuAuto.Host.Commands;
 
 if (args.Length == 0)
 {
-    Console.Error.WriteLine("usage: OsuAuto.Host <run-auto|export-labels|serve> [--window WxH] [--skin file.osk] [--instance N] [options]");
+    Console.Error.WriteLine("usage: OsuAuto.Host <serve|export-labels> [--window WxH] [--skin file.osk] [--instance N] [options]");
     return 2;
 }
 
@@ -15,7 +15,6 @@ bool realtime = options.Flag("realtime");
 
 Func<AutoHostGame, Task> job = args[0] switch
 {
-    "run-auto" => game => RunAuto.Execute(game, options),
     "export-labels" => game => ExportLabels.Execute(game, options),
     "serve" => game => Serve.Execute(game, options),
     _ => throw new ArgumentException($"unknown command {args[0]}"),

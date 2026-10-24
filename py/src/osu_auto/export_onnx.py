@@ -7,14 +7,8 @@ import onnxruntime as ort
 import torch
 
 from .dataset import load_frame_export
-from .models import FrameNet
+from .models import load_checkpoint
 from .targets import AIM_HI, AIM_LO, PLAYFIELD_H, PLAYFIELD_W
-
-
-def load_model(ck: dict) -> FrameNet:
-    model = FrameNet(stack=ck["stack"], width=ck["width"], outputs=ck.get("outputs", 2), heads=ck.get("heads"), bounded_aim=ck.get("bounded_aim", False), aim_head=ck.get("aim_head", "mlp"))
-    model.load_state_dict(ck["model"])
-    return model.eval()
 
 
 def _sample_stacks(frames_from: str | Path | None, offsets: list[int], hw: tuple[int, int], samples: int, rng: np.random.Generator):
@@ -35,8 +29,7 @@ def _sample_stacks(frames_from: str | Path | None, offsets: list[int], hw: tuple
 
 def export(checkpoint: str | Path, out: str | Path | None = None, samples: int = 100, frames_from: str | Path | None = None,
            tol_px: float = 0.5, tol_prob: float = 0.01) -> Path:
-    ck = torch.load(checkpoint, map_location="cpu")
-    model = load_model(ck)
+    model, ck = load_checkpoint(checkpoint)
     h, w = ck["frame_hw"]
     stack = ck["stack"]
     out = Path(out) if out else Path(checkpoint).with_suffix(".onnx")
@@ -45,7 +38,7 @@ def export(checkpoint: str | Path, out: str | Path | None = None, samples: int =
     aux = torch.zeros(1, 2)
     torch.onnx.export(model, (frames, aux), str(out), opset_version=17, input_names=["frames", "aux"], output_names=["out"], dynamo=True)
 
-    meta = {"stack": stack, "offsets": ck.get("offsets"), "latency_max_ms": float(ck.get("latency_max_ms", 0.0)), "frame_hw": [h, w], "outputs": int(ck.get("outputs", 2))}
+    meta = {"stack": stack, "offsets": ck.get("offsets"), "latency_max_ms": float(ck.get("latency_max_ms", 0.0)), "frame_hw": [h, w], "outputs": 4}
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2))
 
     rng = np.random.default_rng(0)

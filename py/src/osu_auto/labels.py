@@ -34,10 +34,6 @@ class Labels:
         prev = np.concatenate(([0], state[:-1]))
         return prev.astype(bool)
 
-    def press_mask(self, key: int) -> np.ndarray:
-        """Frames where the key is up coming into this step (press decision applies)."""
-        return ~self.hold_mask(key)
-
     def index_at(self, t_ms: float) -> int:
         return int(np.clip(np.searchsorted(self.t_ms, t_ms), 0, len(self.t_ms) - 1))
 

@@ -1,7 +1,7 @@
 [project]
 name = "osu-auto"
 version = "0.1.0"
-description = "osu! aim/click agent: training data, env client, deployment loop"
+description = "osu-auto: maps, data export, training and evaluation for a pixels-only osu! agent"
 readme = "README.md"
 authors = [
     { name = "Oyintare Ebelo", email = "75279482+TareHimself@users.noreply.github.com" }
@@ -17,9 +17,9 @@ dependencies = [
     "onnxscript>=0.7.2",
     "opencv-python-headless>=5.0.0.93",
     "pywin32>=312",
+    "pyyaml>=6.0.3",
     "pyzmq>=27.2.0",
     "torch>=2.14.1",
-    "torchvision>=0.29.1",
     "wandb>=0.31.0",
     "windows-capture>=2.0.1",
     "zstandard>=0.25.0",
@@ -34,7 +34,6 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
-torchvision = { index = "pytorch-cu130" }
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
