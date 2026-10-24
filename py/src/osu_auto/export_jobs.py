@@ -191,7 +191,7 @@ def main() -> None:
     p.add_argument("jobs", nargs="?", help="json file: list of {map (file name under data/beatmaps), diff?, osr?, mods?: [spec, ...]}")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--out", default=str(DATA / "exports"))
-    p.add_argument("--skin", action="append", help="skin .osk; repeat for several skins, exports then go to --out/<skin name>/")
+    p.add_argument("--skin", action="append", help="skin .osk, repeat for several; exports go to --out/<skin name>/")
     p.add_argument("--window", default="640x480")
     p.add_argument("--size", default="320x240", help="exported frame size; training pools it down by --pool (2 gives 160x120)")
     p.add_argument("--limit", type=int, default=None, help="only export the first N steps of each job (benchmarks)")
@@ -206,7 +206,7 @@ def main() -> None:
     skins = args.skin or [str(DEFAULT_SKIN)]
     jobs: "queue.Queue[tuple[dict, str, Path]]" = queue.Queue()
     for skin in skins:
-        out = Path(args.out) / Path(skin).stem if len(skins) > 1 else Path(args.out)
+        out = Path(args.out) / Path(skin).stem
         for j in jobs_list:
             jobs.put((j, skin, out))
 

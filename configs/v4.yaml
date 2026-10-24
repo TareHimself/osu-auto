@@ -1,4 +1,4 @@
-# joint_v4: v3_all.json in three skins, synthetic maps from the synth: runs below. Paths are relative to the repo root.
+# joint_v4: v3_all.json in one skin, synthetic maps from the synth: runs below. Paths are relative to the repo root.
 #   uv run python -m osu_auto.synth --config ../configs/v4.yaml
 #   uv run python -m osu_auto.maps --fetch ../data/jobs/v3_all.json
 #   uv run python -m osu_auto.export_jobs --config ../configs/v4.yaml
@@ -18,10 +18,7 @@ export:
   out: data/exports_v3
   list: data/jobs/train_v4.txt
   workers: 5
-  skin:
-    - data/skins/angelmegumin-ai-friendly.osk
-    - data/skins/moonshine-eclipse.osk
-    - data/skins/oka-custom.osk
+  skin: data/skins/YOUR_SKIN.osk  # your skin here; list several to train on several
 
 train:
   exports: data/jobs/train_v4.txt

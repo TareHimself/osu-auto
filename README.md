@@ -62,7 +62,7 @@ dotnet build host/OsuAuto.slnx -c Release
 cd py && uv sync
 ```
 
-Put skins (`.osk`) in `data/skins/`. Maps are fetched in step 1.
+Put your skin (`.osk`) in `data/skins/` and set it as `skin:` in the config. Skins are not in the repo. Maps are fetched in step 1.
 
 ## Pipeline
 
@@ -87,7 +87,7 @@ To build your own set instead: `maps --count 12 --download --jobs <list.json>` p
 uv run python -m osu_auto.export_jobs --config ../configs/v4.yaml
 ```
 
-This writes `data/jobs/train_v4.txt`, the exports that succeeded in every skin. Skins are not in the repo; put your own `.osk` files in `data/skins/` and list them in the config.
+This writes `data/jobs/train_v4.txt`, the exports that succeeded (in every skin, when the config lists several). To train on several skins, list them all under `skin:`.
 
 **3. Train** (writes `joint_best.pt` and `joint_best.onnx` to the config's `out`)
 
@@ -102,7 +102,7 @@ Every training setting not in the config falls back to `train_joint`'s defaults 
 Start a host with the skin to test on (from `host/`, it keeps its game storage in `host/headless/`), then point `evaluate` at it:
 
 ```
-cd ../host && OsuAuto.Host/bin/Release/net10.0/OsuAuto.Host.exe serve --window 640x480 --skin ../data/skins/oka-custom.osk
+cd ../host && OsuAuto.Host/bin/Release/net10.0/OsuAuto.Host.exe serve --window 640x480 --skin ../data/skins/YOUR_SKIN.osk
 uv run python -m osu_auto.evaluate ../data/beatmaps/<map>.osz --diff "<diff>" --model ../data/models/my_run/joint_best.pt
 ```
 
