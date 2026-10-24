@@ -8,15 +8,14 @@ A rebuild of [osu-ai](https://github.com/TareHimself/osu-ai) on osu!lazer.
 
 ## Results
 
-`joint_v3_skins3`, trained on three skins, evaluated closed loop in the host (the model drives the cursor and keys, the game judges):
+`joint_v4`, built from [configs/v4.yaml](configs/v4.yaml) on one skin (angelmegumin AI-friendly), evaluated closed loop in the host (the model drives the cursor and keys, the game judges):
 
-| skin | 1761111 [X] circle hit / acc | Renatus [Hard] circle hit / acc |
+| map | circle hit | accuracy |
 |---|---|---|
-| angelmegumin AI-friendly | 99.3% / 98.7% | 99.3% / 97.7% |
-| moonshine eclipse | 98.2% / 95.5% | 98.6% / 95.5% |
-| oka custom | 99.2% / 98.4% | 100% / 99.6% (full combo) |
+| 1761111 [X] | 99.2% | 98.4% |
+| Renatus [Hard] | 99.6% | 98.9% |
 
-It spins spinners at 500 to 670 rpm with up to 20 ms of added input delay.
+It spins spinners at 650 rpm, and still 530 rpm with 20 ms of added input delay. Training on several skins (list them under `skin:`) gives similar numbers on each of them.
 
 ## How it works
 
