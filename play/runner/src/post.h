@@ -2,7 +2,6 @@
 
 #include <cmath>
 #include <limits>
-#include <numbers>
 #include <utility>
 
 constexpr double kPlayfieldW = 512.0;
@@ -13,40 +12,6 @@ constexpr double kAimHi = 0.75;
 inline std::pair<double, double> decode_to_playfield(double nx, double ny) {
     return {(nx - kAimLo) / (kAimHi - kAimLo) * kPlayfieldW, (ny - kAimLo) / (kAimHi - kAimLo) * kPlayfieldH};
 }
-
-class OneEuro {
-public:
-    OneEuro(double dt, double min_cutoff, double beta, double d_cutoff)
-        : dt_(dt), min_cutoff_(min_cutoff), beta_(beta), d_cutoff_(d_cutoff) {}
-
-    std::pair<double, double> operator()(std::pair<double, double> x) {
-        if (!started_ || min_cutoff_ <= 0) {
-            started_ = true;
-            x_ = x;
-            return x;
-        }
-        const double dx = (x.first - x_.first) / dt_;
-        const double dy = (x.second - x_.second) / dt_;
-        const double ad = alpha(d_cutoff_);
-        dx_ += ad * (dx - dx_);
-        dy_ += ad * (dy - dy_);
-        const double a = alpha(min_cutoff_ + beta_ * std::hypot(dx_, dy_));
-        x_.first += a * (x.first - x_.first);
-        x_.second += a * (x.second - x_.second);
-        return x_;
-    }
-
-private:
-    double alpha(double cutoff) const {
-        const double r = 2 * std::numbers::pi * cutoff * dt_;
-        return r / (r + 1);
-    }
-
-    double dt_, min_cutoff_, beta_, d_cutoff_;
-    bool started_ = false;
-    std::pair<double, double> x_{0, 0};
-    double dx_ = 0, dy_ = 0;
-};
 
 struct Keys {
     bool k1, k2;

@@ -91,7 +91,6 @@ struct Player::Impl {
     Injector injector;
     std::array<uint16_t, 2> scans;
 
-    OneEuro smooth;
     KeyExecutor keys;
     std::mutex tick_mutex;
     mutable std::mutex stats_mutex;
@@ -107,7 +106,7 @@ struct Player::Impl {
     int held_key = -1;
 
     Impl(HWND hwnd_, const PlayOptions& o)
-        : options(o), hwnd(hwnd_), smooth(kPeriod, o.smooth_cutoff, o.smooth_beta, o.smooth_dcut), keys(2, 0.5, 1.0) {
+        : options(o), hwnd(hwnd_), keys(2, 0.5, 1.0) {
         std::string onnx = options.model;
         const auto dot = onnx.rfind('.');
         meta = load_meta(onnx.substr(0, dot) + ".json");
@@ -130,10 +129,10 @@ struct Player::Impl {
         const WindowGeometry g = source->geometry();
         char buf[1024];
         std::snprintf(buf, sizeof(buf),
-                      "\"model\": \"%s\", \"window\": \"%s\", \"client\": [%d, %d, %d, %d], \"smooth_cutoff\": %g, \"smooth_beta\": %g, \"smooth_dcut\": %g, "
+                      "\"model\": \"%s\", \"window\": \"%s\", \"client\": [%d, %d, %d, %d], "
                       "\"latency_extra\": %g, \"latency_max\": %g, \"runner\": \"native\"",
-                      json_escape(options.model).c_str(), json_escape(title).c_str(), g.client_x, g.client_y, g.client_w, g.client_h, options.smooth_cutoff, options.smooth_beta,
-                      options.smooth_dcut, options.latency_extra_ms, meta.latency_max_ms);
+                      json_escape(options.model).c_str(), json_escape(title).c_str(), g.client_x, g.client_y, g.client_w, g.client_h,
+                      options.latency_extra_ms, meta.latency_max_ms);
         event("init", buf);
         loop = std::thread([this] { run(); });
     }
@@ -153,7 +152,6 @@ struct Player::Impl {
 
     void start() {
         std::lock_guard lock(tick_mutex);
-        smooth = OneEuro(kPeriod, options.smooth_cutoff, options.smooth_beta, options.smooth_dcut);
         keys = KeyExecutor(2, 0.5, 1.0);
         trace.clear();
         trace_path = options.log_dir + "/play-" + stamp() + "-trace.npz";
@@ -278,7 +276,7 @@ struct Player::Impl {
         infer_max = std::max(infer_max, infer_ms);
 
         const double p_press = 1.0 / (1.0 + std::exp(-o.press_logit)), p_down = 1.0 / (1.0 + std::exp(-o.down_logit));
-        const auto [px, py] = smooth(decode_to_playfield(o.x, o.y));
+        const auto [px, py] = decode_to_playfield(o.x, o.y);
         const auto [sx, sy] = playfield_to_screen(source->geometry(), px, py);
         const Keys k = keys.apply(p_press, p_down);
         const bool focused = GetForegroundWindow() == hwnd;

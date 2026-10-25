@@ -1,6 +1,6 @@
 # Play
 
-Plays osu!lazer with a trained model at 100 Hz, with no Python in the loop. It captures the game window, runs the ONNX model, smooths the aim, moves the cursor and presses Z/X. It does the same job as `py/src/osu_auto/play.py`, with steadier timing.
+Plays osu!lazer with a trained model at 100 Hz, with no Python in the loop. It captures the game window, runs the ONNX model, moves the cursor and presses Z/X. It does the same job as `py/src/osu_auto/play.py`, with steadier timing.
 
 Windows only, x64, an NVIDIA GPU for CUDA (or `--cpu`), lazer in windowed or borderless mode.
 
@@ -51,7 +51,6 @@ The first CUDA start spends a few seconds on cuDNN setup before the agent can ru
 | `--window P` | window whose title starts with P (default `osu!`) |
 | `--keys zx` | the two keyboard keys |
 | `--latency-extra MS` | extra delay told to the model on top of the measured one (default 8) |
-| `--smooth-cutoff X`, `--smooth-beta X`, `--smooth-dcut X` | 1 euro filter, 0 cutoff turns smoothing off |
 | `--log-dir D` | where logs go (default `data/play_logs` under the current folder, so run from the repo root) |
 
 While running it prints one status line per second: capture fps, frame age, loop time, ticks, presses and the worst stalls.
@@ -84,7 +83,7 @@ uv run --project play/shell silo run -C play/shell runner hook eject
 
 | command | what it checks |
 |---|---|
-| `runner verify <model.onnx> <fixture dir> [cpu\|cuda]` | model output, smoothing and key logic against Python on a recorded fixture |
+| `runner verify <model.onnx> <fixture dir> [cpu\|cuda]` | model output, aim decode and key logic against Python on a recorded fixture |
 | `runner shader-test <dir>` | the GPU gray and downsample step against cv2 on a saved frame |
 | `runner capture "osu!" 5 out.pgm` | Windows capture for a few seconds, saves the last frame |
 | `runner hook-capture "osu!" 5 out.pgm` | the same through the hook |

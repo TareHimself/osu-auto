@@ -52,7 +52,6 @@ int verify(const std::string& model_path, const std::string& dir, bool cuda) {
     const char* input_names[] = {"frames", "aux"};
     const char* output_names[] = {"out"};
 
-    OneEuro smooth(0.01, 2.0, 0.05, 10.0);
     KeyExecutor keys(2, 0.5, 1.0);
     std::vector<float> x(frame_floats);
     double worst_out = 0, worst_aim = 0, total_ms = 0;
@@ -85,7 +84,7 @@ int verify(const std::string& model_path, const std::string& dir, bool cuda) {
         worst_out = std::max({worst_out, std::abs(o[0] - ref[0]), std::abs(o[1] - ref[1]), std::abs(sigmoid(o[2]) - ref[2]), std::abs(sigmoid(o[3]) - ref[3])});
 
         // post-processing runs on the reference outputs, so model noise cannot flip a key edge
-        const auto [px, py] = smooth(decode_to_playfield(ref[0], ref[1]));
+        const auto [px, py] = decode_to_playfield(ref[0], ref[1]);
         const Keys k = keys.apply(ref[2], ref[3]);
         const double* want = post.as<double>() + t * 4;
         worst_aim = std::max({worst_aim, std::abs(px - want[0]), std::abs(py - want[1])});
@@ -94,7 +93,7 @@ int verify(const std::string& model_path, const std::string& dir, bool cuda) {
 
     std::printf("%s, %lld ticks, %.3f ms/tick\n", cuda ? "cuda" : "cpu", static_cast<long long>(ticks), total_ms / static_cast<double>(ticks));
     std::printf("model output max abs diff vs torch (x, y, p_press, p_down): %.2e\n", worst_out);
-    std::printf("smoothed aim max abs diff vs python (playfield units): %.2e\n", worst_aim);
+    std::printf("aim max abs diff vs python (playfield units): %.2e\n", worst_aim);
     std::printf("key state mismatches vs python: %lld of %lld\n", static_cast<long long>(key_mismatch), static_cast<long long>(ticks));
     return key_mismatch == 0 && worst_aim < 1e-6 ? 0 : 1;
 }
@@ -253,12 +252,6 @@ int play(int argc, char** argv) {
             duration = std::atoi(argv[++i]);
         } else if (a == "--latency-extra" && has_value) {
             options.latency_extra_ms = std::atof(argv[++i]);
-        } else if (a == "--smooth-cutoff" && has_value) {
-            options.smooth_cutoff = std::atof(argv[++i]);
-        } else if (a == "--smooth-beta" && has_value) {
-            options.smooth_beta = std::atof(argv[++i]);
-        } else if (a == "--smooth-dcut" && has_value) {
-            options.smooth_dcut = std::atof(argv[++i]);
         } else if (a == "--keys" && has_value) {
             options.keys = argv[++i];
         } else if (a == "--log-dir" && has_value) {
@@ -321,6 +314,6 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "capture") {
         return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
     }
-    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play [model.onnx] [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--smooth-cutoff|-beta|-dcut X]\n");
+    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play [model.onnx] [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS]\n");
     return 2;
 }

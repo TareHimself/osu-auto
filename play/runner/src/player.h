@@ -12,9 +12,6 @@ struct PlayOptions {
     bool inject = true;
     bool cuda = true;
     bool hook = false;
-    double smooth_cutoff = 2.0;
-    double smooth_beta = 0.05;
-    double smooth_dcut = 10.0;
     double latency_extra_ms = 8.0;
     std::string keys = "zx";
     std::string log_dir = "data/play_logs";
@@ -27,7 +24,7 @@ struct PlayStats {
     bool focused = true;
 };
 
-// Runs the model against one window at 100 Hz: capture, infer, smooth, move the cursor, press keys
+// Runs the model against one window at 100 Hz: capture, infer, move the cursor, press keys
 class Player {
 public:
     Player(HWND hwnd, const PlayOptions& options);

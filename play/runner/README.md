@@ -1,6 +1,6 @@
 # Runner
 
-The C++ code of the native runner: capture, ONNX inference, smoothing, input and the Present hook. To use the runner, see `../README.md`.
+The C++ code of the native runner: capture, ONNX inference, input and the Present hook. To use the runner, see `../README.md`.
 
 ```
 src/               main.cpp (commands), player.cpp (100 Hz loop), processor.cpp (GPU gray and downsample),

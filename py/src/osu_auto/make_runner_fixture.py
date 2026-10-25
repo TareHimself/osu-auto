@@ -13,15 +13,14 @@ from .dataset import load_frame_export
 from .keys import KeyExecutor
 from .models import load_checkpoint
 from .paths import MODELS
-from .play import OneEuro
-from .targets import AIM_HI, AIM_LO, PLAYFIELD_H, PLAYFIELD_W
+from .targets import decode_to_playfield
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("export")
     ap.add_argument("out")
-    ap.add_argument("--model", default=str(MODELS / "joint_v3_spin3/joint_best.pt"))
+    ap.add_argument("--model", default=str(MODELS / "current/joint_best.pt"))
     ap.add_argument("--start", type=int, default=2000)
     ap.add_argument("--ticks", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=0)
@@ -39,8 +38,6 @@ def main() -> None:
         sums = frames.reshape(n, h // pool, pool, w // pool, pool).sum(axis=(2, 4), dtype=np.int64)
         frames = ((sums + pool * pool // 2) // (pool * pool)).astype(np.uint8)
     rng = np.random.default_rng(args.seed)
-    smooth_args = (0.01, 2.0, 0.05, 10.0)
-    smooth = OneEuro(*smooth_args)
     keys = KeyExecutor(2, 0.5, 1.0)
     stacks, auxes, outs, posts = [], [], [], []
     for i in range(args.start, args.start + args.ticks):
@@ -51,7 +48,7 @@ def main() -> None:
             o = model(x, torch.tensor([[aux0, 0.0]], dtype=torch.float32))[0]
         nx, ny = o[:2].tolist()
         p_press, p_down = torch.sigmoid(o[2:]).tolist()
-        px, py = smooth(((nx - AIM_LO) / (AIM_HI - AIM_LO) * PLAYFIELD_W, (ny - AIM_LO) / (AIM_HI - AIM_LO) * PLAYFIELD_H))
+        px, py = decode_to_playfield(nx, ny)
         k1, k2 = keys.apply(p_press, p_down > 0.5, p_down)
         stacks.append(stack)
         auxes.append(aux0)
@@ -64,7 +61,7 @@ def main() -> None:
     np.save(out / "aux.npy", np.array(auxes, dtype=np.float32))
     np.save(out / "out.npy", np.array(outs, dtype=np.float64))
     np.save(out / "post.npy", np.array(posts, dtype=np.float64))
-    (out / "meta.json").write_text(json.dumps({"ticks": len(stacks), "smooth": list(smooth_args), "model": args.model}))
+    (out / "meta.json").write_text(json.dumps({"ticks": len(stacks), "model": args.model}))
     presses = int(np.sum(np.diff(np.array(posts)[:, 2:].sum(axis=1), prepend=0) > 0))
     print(f"wrote {len(stacks)} ticks to {out}, key-down transitions ~{presses}")
 
