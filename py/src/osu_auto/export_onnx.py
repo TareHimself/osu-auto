@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 import torch
+from torch import nn
 
 from .dataset import load_frame_export
 from .models import load_checkpoint
@@ -27,6 +28,16 @@ def _sample_stacks(frames_from: str | Path | None, offsets: list[int], hw: tuple
         yield stack
 
 
+class _WithAttention(nn.Module):
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, frames: torch.Tensor, aux: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        out, logits = self.model(frames, aux, return_logits=True)
+        return out, logits.flatten(1).softmax(dim=1).view_as(logits)
+
+
 def export(checkpoint: str | Path, out: str | Path | None = None, samples: int = 100, frames_from: str | Path | None = None,
            tol_px: float = 0.5, tol_prob: float = 0.01) -> Path:
     model, ck = load_checkpoint(checkpoint)
@@ -36,27 +47,36 @@ def export(checkpoint: str | Path, out: str | Path | None = None, samples: int =
 
     frames = torch.zeros(1, stack, h, w)
     aux = torch.zeros(1, 2)
-    torch.onnx.export(model, (frames, aux), str(out), opset_version=17, input_names=["frames", "aux"], output_names=["out"], dynamo=True)
+    attention = model.aim_head == "softargmax"
+    module = _WithAttention(model) if attention else model
+    names = ["out", "attention"] if attention else ["out"]
+    torch.onnx.export(module, (frames, aux), str(out), opset_version=17, input_names=["frames", "aux"], output_names=names, dynamo=True)
 
     meta = {"stack": stack, "offsets": ck.get("offsets"), "latency_max_ms": float(ck.get("latency_max_ms", 0.0)), "frame_hw": [h, w], "outputs": 4}
+    if attention:
+        meta["attention_hw"] = [h // 8, w // 8]
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2))
 
     rng = np.random.default_rng(0)
     sess = ort.InferenceSession(str(out), providers=["CPUExecutionProvider"])
     px_per_unit = np.array([PLAYFIELD_W, PLAYFIELD_H]) / (AIM_HI - AIM_LO)
-    worst_px = worst_prob = 0.0
+    worst_px = worst_prob = worst_att = 0.0
     for s in _sample_stacks(frames_from, ck.get("offsets") or list(range(stack)), (h, w), samples, rng):
         f = torch.from_numpy(s[None]).float() / 255.0
         a = torch.tensor([[rng.random(), 0.0]], dtype=torch.float32)
         with torch.no_grad():
-            ref = model(f, a)[0].double()
-        got = torch.from_numpy(sess.run(None, {"frames": f.numpy(), "aux": a.numpy()})[0][0]).double()
+            ref_all = module(f, a)
+        ref = (ref_all[0] if attention else ref_all)[0].double()
+        got_all = sess.run(None, {"frames": f.numpy(), "aux": a.numpy()})
+        got = torch.from_numpy(got_all[0][0]).double()
+        if attention:
+            worst_att = max(worst_att, float(np.abs(ref_all[1].numpy() - got_all[1]).max()))
         worst_px = max(worst_px, float(np.hypot(*((ref[:2] - got[:2]).numpy() * px_per_unit))))
         worst_prob = max(worst_prob, float((torch.sigmoid(ref[2:]) - torch.sigmoid(got[2:])).abs().max()))
     source = "noise" if frames_from is None else "real frames"
-    print(f"wrote {out}, worst over {samples} {source}: aim {worst_px:.2e} px, click prob {worst_prob:.2e}")
-    if worst_px > tol_px or worst_prob > tol_prob:
-        raise RuntimeError(f"onnx mismatch: aim {worst_px:.2e} px (max {tol_px}), click prob {worst_prob:.2e} (max {tol_prob})")
+    print(f"wrote {out}, worst over {samples} {source}: aim {worst_px:.2e} px, click prob {worst_prob:.2e}, attention {worst_att:.2e}")
+    if worst_px > tol_px or worst_prob > tol_prob or worst_att > tol_prob:
+        raise RuntimeError(f"onnx mismatch: aim {worst_px:.2e} px (max {tol_px}), click prob {worst_prob:.2e}, attention {worst_att:.2e} (max {tol_prob})")
     return out
 
 
