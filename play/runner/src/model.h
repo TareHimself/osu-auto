@@ -32,10 +32,14 @@ public:
         const std::wstring wide(onnx_path.begin(), onnx_path.end());
         session_ = Ort::Session(env_, wide.c_str(), options_);
         if (session_.GetOutputCount() > 1) {
+            Ort::AllocatorWithDefaultOptions allocator;
             const auto shape = session_.GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape();
-            attention_shape_ = {static_cast<int>(shape[shape.size() - 2]), static_cast<int>(shape[shape.size() - 1])};
-            attention_.resize(static_cast<size_t>(attention_shape_.h) * attention_shape_.w);
-            output_count_ = 2;
+            const bool named = std::string(session_.GetOutputNameAllocated(1, allocator).get()) == "attention";
+            if (named && shape.size() >= 2 && shape[shape.size() - 2] > 0 && shape[shape.size() - 1] > 0) {
+                attention_shape_ = {static_cast<int>(shape[shape.size() - 2]), static_cast<int>(shape[shape.size() - 1])};
+                attention_.resize(static_cast<size_t>(attention_shape_.h) * attention_shape_.w);
+                output_count_ = 2;
+            }
         }
 
         const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
@@ -48,7 +52,6 @@ public:
     float* frames() { return frames_.data(); }
     const float* frames() const { return frames_.data(); }
 
-    // Softmax over the aim cells from the last run(), empty when the model has no attention output
     const std::vector<float>& attention() const { return attention_; }
     AttentionShape attention_shape() const { return attention_shape_; }
 

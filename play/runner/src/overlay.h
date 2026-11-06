@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -15,14 +16,13 @@ struct OverlaySnapshot {
     double p_press = 0, p_down = 0;
     bool k1 = false, k2 = false;
     char key_names[2] = {'z', 'x'};
-    long long presses = 0, k1_presses = 0, k2_presses = 0;
-    double frame_age_ms = 0, infer_ms = 0, latency_ms = 0, capture_fps = 0;
+    long long k1_presses = 0, k2_presses = 0;
+    double frame_age_ms = 0, infer_ms = 0, capture_fps = 0;
     GrayFrame frame{};
     int attention_h = 0, attention_w = 0;
     std::vector<float> attention;
 };
 
-// Serves the overlay page from `dir` and streams snapshots to it as server-sent events on /events
 class OverlayServer {
 public:
     OverlayServer(int port, std::filesystem::path dir);
@@ -35,9 +35,10 @@ public:
 
 private:
     void serve();
-    void handle(uintptr_t client);
+    void respond(uintptr_t client, const std::string& request);
 
     std::filesystem::path dir_;
+    int port_;
     uintptr_t listener_;
     std::vector<uintptr_t> clients_;
     std::mutex mutex_;

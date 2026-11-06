@@ -30,7 +30,6 @@ inline double now_seconds() {
     return qpc_to_seconds(c.QuadPart);
 }
 
-// A rectangle in model-input pixels that is painted black before anything reads the frame
 struct MaskRect {
     int x, y, w, h;
 };
@@ -42,7 +41,6 @@ struct TimedFrame {
 
 class FrameRing {
 public:
-    // Call before any frame is pushed
     void set_masks(std::vector<MaskRect> masks) { masks_ = std::move(masks); }
 
     void push(double t, const GrayFrame& pixels) {

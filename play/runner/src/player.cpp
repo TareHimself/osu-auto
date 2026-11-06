@@ -116,6 +116,7 @@ struct Player::Impl {
         steps = meta.steps();
         scans = {Injector::scan_code(options.keys[0]), Injector::scan_code(options.keys[1])};
 
+        if (options.overlay_port > 0) overlay = std::make_unique<OverlayServer>(options.overlay_port, options.overlay_dir);
         std::filesystem::create_directories(options.log_dir);
         log.open(options.log_dir + "/play-" + stamp() + ".jsonl", std::ios::app);
 
@@ -140,7 +141,6 @@ struct Player::Impl {
         event("init", buf);
         snapshot.key_names[0] = options.keys[0];
         snapshot.key_names[1] = options.keys[1];
-        if (options.overlay_port > 0) overlay = std::make_unique<OverlayServer>(options.overlay_port, options.overlay_dir);
         loop = std::thread([this] { run(); });
     }
 
@@ -313,12 +313,12 @@ struct Player::Impl {
             stats.latency_ms = latency_ms;
             stats.focused = focused;
         }
-        if (overlay) publish(px, py, p_press, p_down, k, focused, *age * 1000, infer_ms, latency_ms);
+        if (overlay) publish(px, py, p_press, p_down, k, focused, *age * 1000, infer_ms);
         const double row[kTraceColumns] = {t_start, px, py, p_press, p_down, static_cast<double>(k.k1), static_cast<double>(k.k2), *age * 1000, infer_ms};
         trace.insert(trace.end(), row, row + kTraceColumns);
     }
 
-    void publish(double px, double py, double p_press, double p_down, Keys k, bool focused, double frame_age_ms, double infer_ms, double latency_ms) {
+    void publish(double px, double py, double p_press, double p_down, Keys k, bool focused, double frame_age_ms, double infer_ms) {
         const auto [bx, by] = playfield_to_box(px, py);
         snapshot.active = true;
         snapshot.focused = focused;
@@ -332,12 +332,7 @@ struct Player::Impl {
         snapshot.k2 = k.k2;
         snapshot.frame_age_ms = frame_age_ms;
         snapshot.infer_ms = infer_ms;
-        snapshot.latency_ms = latency_ms;
         snapshot.capture_fps = source->fps();
-        {
-            std::lock_guard lock(stats_mutex);
-            snapshot.presses = stats.presses;
-        }
         const float* newest = model->frames() + (steps.size() - 1) * snapshot.frame.size();
         for (size_t i = 0; i < snapshot.frame.size(); ++i) snapshot.frame[i] = static_cast<uint8_t>(std::lround(newest[i] * 255.0f));
         const AttentionShape shape = model->attention_shape();

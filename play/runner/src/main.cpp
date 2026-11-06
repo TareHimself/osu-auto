@@ -195,7 +195,6 @@ constexpr int kDefaultOverlayPort = 7270;
 // lazer HUD inside the capture box, in model-input pixels: health bar, top-right counter, bottom-centre marker
 const std::vector<MaskRect> kHudMasks = {{0, 0, 60, 5}, {140, 0, 20, 10}, {64, 114, 32, 6}};
 
-// Looks for a repo-relative path above the executable and the current folder
 std::filesystem::path find_up(const char* relative) {
     wchar_t buffer[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
@@ -262,6 +261,10 @@ int play(int argc, char** argv) {
             options.latency_extra_ms = std::atof(argv[++i]);
         } else if (a == "--keys" && has_value) {
             options.keys = argv[++i];
+            if (options.keys.size() != 2 || !std::isalnum(static_cast<unsigned char>(options.keys[0])) || !std::isalnum(static_cast<unsigned char>(options.keys[1]))) {
+                std::fprintf(stderr, "--keys wants two letters or digits, like zx\n");
+                return 2;
+            }
         } else if (a == "--log-dir" && has_value) {
             options.log_dir = argv[++i];
         } else if (a == "--mask" && has_value) {
@@ -275,6 +278,10 @@ int play(int argc, char** argv) {
             options.masks.insert(options.masks.end(), kHudMasks.begin(), kHudMasks.end());
         } else if (a == "--overlay") {
             options.overlay_port = has_value && std::isdigit(static_cast<unsigned char>(argv[i + 1][0])) ? std::atoi(argv[++i]) : kDefaultOverlayPort;
+            if (options.overlay_port < 1 || options.overlay_port > 65535) {
+                std::fprintf(stderr, "--overlay port must be 1 to 65535\n");
+                return 2;
+            }
         } else if (a == "--overlay-dir" && has_value) {
             options.overlay_dir = argv[++i];
         } else {

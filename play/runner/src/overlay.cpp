@@ -62,10 +62,10 @@ std::string encode(const OverlaySnapshot& s) {
     std::string out = "data: {";
     char buf[512];
     std::snprintf(buf, sizeof(buf),
-                  "\"active\":%s,\"focused\":%s,\"x\":%.5f,\"y\":%.5f,\"p_press\":%.4f,\"p_down\":%.4f,\"k1\":%d,\"k2\":%d,\"key_names\":\"%c%c\",\"presses\":%lld,\"k1_presses\":%lld,\"k2_presses\":%lld,"
-                  "\"frame_age_ms\":%.2f,\"infer_ms\":%.2f,\"latency_ms\":%.2f,\"capture_fps\":%.0f,\"fw\":%d,\"fh\":%d,\"aw\":%d,\"ah\":%d,",
-                  s.active ? "true" : "false", s.focused ? "true" : "false", s.box_x, s.box_y, s.p_press, s.p_down, s.k1 ? 1 : 0, s.k2 ? 1 : 0, s.key_names[0], s.key_names[1], s.presses, s.k1_presses, s.k2_presses,
-                  s.frame_age_ms, s.infer_ms, s.latency_ms, s.capture_fps, kFrameW, kFrameH, s.attention_w, s.attention_h);
+                  "\"active\":%s,\"focused\":%s,\"x\":%.5f,\"y\":%.5f,\"p_press\":%.4f,\"p_down\":%.4f,\"k1\":%d,\"k2\":%d,\"key_names\":\"%c%c\",\"k1_presses\":%lld,\"k2_presses\":%lld,"
+                  "\"frame_age_ms\":%.2f,\"infer_ms\":%.2f,\"capture_fps\":%.0f,\"aw\":%d,\"ah\":%d,",
+                  s.active ? "true" : "false", s.focused ? "true" : "false", s.box_x, s.box_y, s.p_press, s.p_down, s.k1 ? 1 : 0, s.k2 ? 1 : 0, s.key_names[0], s.key_names[1], s.k1_presses, s.k2_presses,
+                  s.frame_age_ms, s.infer_ms, s.capture_fps, s.attention_w, s.attention_h);
     out += buf;
     out += "\"frame\":\"" + base64(s.frame.data(), s.frame.size()) + "\",";
     out += "\"attention\":\"" + base64(reinterpret_cast<const uint8_t*>(s.attention.data()), s.attention.size() * sizeof(float)) + "\"}\n\n";
@@ -74,7 +74,7 @@ std::string encode(const OverlaySnapshot& s) {
 
 }  // namespace
 
-OverlayServer::OverlayServer(int port, std::filesystem::path dir) : dir_(std::move(dir)) {
+OverlayServer::OverlayServer(int port, std::filesystem::path dir) : dir_(std::move(dir)), port_(port) {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) throw std::runtime_error("WSAStartup failed");
     const SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -111,34 +111,89 @@ void OverlayServer::set_active(bool active) {
     ++version_;
 }
 
+namespace {
+
+struct Pending {
+    SOCKET socket;
+    std::string request;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+constexpr auto kRequestTimeout = std::chrono::seconds(2);
+constexpr size_t kMaxPending = 32;
+constexpr size_t kMaxRequest = 16384;
+
+std::string header(const std::string& request, const char* name) {
+    std::string lower = request;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const auto at = lower.find(std::string("\r\n") + name + ":");
+    if (at == std::string::npos) return {};
+    auto begin = at + 3 + std::strlen(name);
+    const auto end = lower.find("\r\n", begin);
+    while (begin < end && lower[begin] == ' ') ++begin;
+    return lower.substr(begin, end - begin);
+}
+
+}  // namespace
+
 void OverlayServer::serve() {
-    const auto period = std::chrono::duration<double>(1.0 / kSendHz);
+    const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / kSendHz));
     auto next = std::chrono::steady_clock::now();
     auto last_send = next;
     uint64_t sent_version = 0;
+    std::vector<Pending> pending;
     while (!closing_) {
         fd_set read;
         FD_ZERO(&read);
         FD_SET(static_cast<SOCKET>(listener_), &read);
-        const auto wait = std::max(std::chrono::duration<double>(0), std::chrono::duration<double>(next - std::chrono::steady_clock::now()));
-        timeval tv{0, static_cast<long>(wait.count() * 1e6)};
+        for (const auto& p : pending) FD_SET(p.socket, &read);
+        const auto wait = std::max(std::chrono::steady_clock::duration::zero(), next - std::chrono::steady_clock::now());
+        timeval tv{0, static_cast<long>(std::chrono::duration_cast<std::chrono::microseconds>(wait).count())};
         if (select(0, &read, nullptr, nullptr, &tv) > 0) {
-            const SOCKET c = accept(static_cast<SOCKET>(listener_), nullptr, nullptr);
-            if (c != INVALID_SOCKET) handle(c);
+            if (FD_ISSET(static_cast<SOCKET>(listener_), &read)) {
+                const SOCKET c = accept(static_cast<SOCKET>(listener_), nullptr, nullptr);
+                if (c != INVALID_SOCKET && pending.size() >= kMaxPending) {
+                    closesocket(c);
+                } else if (c != INVALID_SOCKET) {
+                    u_long nonblocking = 1;
+                    ioctlsocket(c, FIONBIO, &nonblocking);
+                    pending.push_back({c, {}, std::chrono::steady_clock::now() + kRequestTimeout});
+                }
+            }
+            std::erase_if(pending, [&](Pending& p) {
+                if (!FD_ISSET(p.socket, &read)) return false;
+                char buf[2048];
+                const int n = recv(p.socket, buf, sizeof(buf), 0);
+                if (n <= 0) {
+                    if (n < 0 && WSAGetLastError() == WSAEWOULDBLOCK) return false;
+                    closesocket(p.socket);
+                    return true;
+                }
+                p.request.append(buf, static_cast<size_t>(n));
+                if (p.request.find("\r\n\r\n") == std::string::npos && p.request.size() < kMaxRequest) return false;
+                respond(p.socket, p.request);
+                return true;
+            });
         }
         const auto now = std::chrono::steady_clock::now();
+        std::erase_if(pending, [&](const Pending& p) {
+            if (now < p.deadline) return false;
+            closesocket(p.socket);
+            return true;
+        });
         if (now < next) continue;
-        next += std::chrono::duration_cast<std::chrono::steady_clock::duration>(period);
+        next += period;
         if (next < now - period) next = now;
 
-        std::string message;
+        OverlaySnapshot snapshot;
         {
             std::lock_guard lock(mutex_);
             const bool fresh = version_ != sent_version;
             if (clients_.empty() || (!fresh && now - last_send < std::chrono::milliseconds(kIdleResendMs))) continue;
             sent_version = version_;
-            message = encode(snapshot_);
+            snapshot = snapshot_;
         }
+        const std::string message = encode(snapshot);
         last_send = now;
         std::erase_if(clients_, [&](uintptr_t c) {
             if (send_all(static_cast<SOCKET>(c), message)) return false;
@@ -146,23 +201,18 @@ void OverlayServer::serve() {
             return true;
         });
     }
+    for (const auto& p : pending) closesocket(p.socket);
 }
 
-void OverlayServer::handle(uintptr_t client) {
+void OverlayServer::respond(uintptr_t client, const std::string& request) {
     const SOCKET c = static_cast<SOCKET>(client);
+    u_long blocking = 0;
+    ioctlsocket(c, FIONBIO, &blocking);
     const DWORD timeout_ms = 500;
-    setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
     setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout_ms), sizeof(timeout_ms));
     const BOOL nodelay = TRUE;
     setsockopt(c, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof(nodelay));
 
-    std::string request;
-    char buf[2048];
-    while (request.find("\r\n\r\n") == std::string::npos && request.size() < 16384) {
-        const int n = recv(c, buf, sizeof(buf), 0);
-        if (n <= 0) break;
-        request.append(buf, static_cast<size_t>(n));
-    }
     std::string path;
     if (request.rfind("GET ", 0) == 0) {
         const auto end = request.find(' ', 4);
@@ -170,8 +220,13 @@ void OverlayServer::handle(uintptr_t client) {
     }
     if (const auto q = path.find('?'); q != std::string::npos) path.resize(q);
 
+    // Rejects other hostnames so a web page cannot reach the stream through DNS rebinding
+    const std::string host = header(request, "host");
+    const std::string port = ":" + std::to_string(port_);
+    if (host != "127.0.0.1" + port && host != "localhost" + port) path.clear();
+
     if (path == "/events") {
-        if (send_all(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *\r\nConnection: keep-alive\r\n\r\n")) {
+        if (send_all(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n")) {
             clients_.push_back(client);
             return;
         }
