@@ -6,6 +6,10 @@ It is trained by behaviour cloning on autoplay. A modified lazer build renders a
 
 A rebuild of osu-ai on osu!lazer. The old project lives on the [legacy](https://github.com/TareHimself/osu-auto/tree/legacy) branch.
 
+[![osu-auto showcase](https://img.youtube.com/vi/tFMnvKfLdYs/maxresdefault.jpg)](https://www.youtube.com/watch?v=tFMnvKfLdYs)
+
+Full runs of `joint_v4` on maps it never trained on, nomod and DT (no mods in training), up to Galaxy Collapse [Galactic] at 19.76★ with DT, which it fails. The panel on the left is the [stream overlay](play/README.md#stream-overlay): the model's input, its aim attention and its click decisions.
+
 ## Results
 
 `joint_v4`, built from [configs/v4.yaml](configs/v4.yaml) on one skin (angelmegumin AI-friendly), evaluated closed loop in the host (the model drives the cursor and keys, the game judges):
