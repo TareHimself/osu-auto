@@ -60,8 +60,16 @@ WindowGeometry window_geometry(HWND hwnd) {
     return {w, h, origin.x, origin.y, capture_box(w, h, origin.x - bounds.left, origin.y - bounds.top)};
 }
 
+namespace {
+constexpr double kPlayfieldW = 512.0, kPlayfieldH = 384.0, kSizeAdjust = 0.8, kStoryboardShift = 8.0;
+}
+
+std::pair<double, double> playfield_to_box(double px, double py) {
+    const double scale = kSizeAdjust / kPlayfieldW;
+    return {0.5 + (px - kPlayfieldW / 2) * scale, 0.5 + (py + kStoryboardShift - kPlayfieldH / 2) * scale * 4.0 / 3.0};
+}
+
 std::pair<double, double> playfield_to_screen(const WindowGeometry& g, double px, double py) {
-    constexpr double kPlayfieldW = 512.0, kPlayfieldH = 384.0, kSizeAdjust = 0.8, kStoryboardShift = 8.0;
     const double box_w = std::min<double>(g.client_w, g.client_h * 4.0 / 3.0);
     const double scale = kSizeAdjust * box_w / kPlayfieldW;
     const double pf_x = g.client_w / 2.0 - kPlayfieldW * scale / 2;

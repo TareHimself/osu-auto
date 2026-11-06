@@ -52,8 +52,25 @@ The first CUDA start spends a few seconds on cuDNN setup before the agent can ru
 | `--keys zx` | the two keyboard keys |
 | `--latency-extra MS` | extra delay told to the model on top of the measured one (default 8) |
 | `--log-dir D` | where logs go (default `data/play_logs` under the current folder, so run from the repo root) |
+| `--mask x,y,w,h` | paint a rectangle of the model's 160x120 input black (repeatable), to hide HUD the model never trained on |
+| `--mask-hud` | masks for lazer's HUD inside the capture box: health bar, top-right counter, bottom-centre marker |
+| `--overlay [PORT]` | serve the stream overlay on `http://127.0.0.1:PORT/` (default 7270) |
+| `--overlay-dir D` | folder the overlay page is served from (default `play/overlay`) |
 
 While running it prints one status line per second: capture fps, frame age, loop time, ticks, presses and the worst stalls.
+
+## Stream overlay
+
+`--overlay` serves a page that shows what the model sees and decides, for recording with OBS:
+
+- the 160x120 grayscale frame the model gets, with its aim attention as a blue glow and the aim point as a ring
+- aim confidence (attention mass around the peak), press and hold probabilities, and a 3 second chart of both
+- Z/X key lights with press counts (counted at 100 Hz, reset on each F8 start)
+- inference time, frame age and capture fps
+
+In OBS add a **Browser** source with URL `http://127.0.0.1:7270/`, width 540, height 900. The background is transparent. URL options: `?scale=1.5` resizes the panel, `?hide=keys,stats,about` hides cards.
+
+The heatmap needs a model exported with its attention output (`export_onnx` adds it for softargmax models). The page is plain HTML in `play/overlay/`, so edits show up on reload without rebuilding the runner.
 
 ## Logs
 

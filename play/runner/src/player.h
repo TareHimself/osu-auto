@@ -5,6 +5,9 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
+
+#include "frame_ring.h"
 
 struct PlayOptions {
     std::string model;
@@ -15,6 +18,9 @@ struct PlayOptions {
     double latency_extra_ms = 8.0;
     std::string keys = "zx";
     std::string log_dir = "data/play_logs";
+    std::vector<MaskRect> masks;
+    int overlay_port = 0;
+    std::string overlay_dir;
 };
 
 struct PlayStats {

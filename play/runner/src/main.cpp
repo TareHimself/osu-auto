@@ -3,10 +3,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <iterator>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -187,15 +190,20 @@ int capture(const std::wstring& prefix, int seconds, const char* pgm_path, bool 
 
 
 const char* kDefaultModel = "data/models/current/joint_best.onnx";
+const char* kOverlayPage = "play/overlay/index.html";
+constexpr int kDefaultOverlayPort = 7270;
+// lazer HUD inside the capture box, in model-input pixels: health bar, top-right counter, bottom-centre marker
+const std::vector<MaskRect> kHudMasks = {{0, 0, 60, 5}, {140, 0, 20, 10}, {64, 114, 32, 6}};
 
-std::filesystem::path find_default_model() {
+// Looks for a repo-relative path above the executable and the current folder
+std::filesystem::path find_up(const char* relative) {
     wchar_t buffer[MAX_PATH];
     const DWORD n = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
     std::vector<std::filesystem::path> starts = {std::filesystem::current_path()};
     if (n > 0) starts.insert(starts.begin(), std::filesystem::path(buffer, buffer + n).parent_path());
     for (auto dir : starts) {
         for (; !dir.empty(); dir = dir.parent_path()) {
-            const auto candidate = dir / kDefaultModel;
+            const auto candidate = dir / relative;
             if (std::filesystem::exists(candidate)) return candidate;
             if (dir == dir.parent_path()) break;
         }
@@ -222,7 +230,7 @@ int play(int argc, char** argv) {
     const bool is_default = argc < 3 || std::string(argv[2]).rfind("--", 0) == 0;
     int first_option = is_default ? 2 : 3;
     if (is_default) {
-        const auto found = find_default_model();
+        const auto found = find_up(kDefaultModel);
         if (found.empty()) {
             std::fprintf(stderr, "no model given and %s not found\n", kDefaultModel);
             return 1;
@@ -256,17 +264,46 @@ int play(int argc, char** argv) {
             options.keys = argv[++i];
         } else if (a == "--log-dir" && has_value) {
             options.log_dir = argv[++i];
+        } else if (a == "--mask" && has_value) {
+            MaskRect m{};
+            if (std::sscanf(argv[++i], "%d,%d,%d,%d", &m.x, &m.y, &m.w, &m.h) != 4) {
+                std::fprintf(stderr, "--mask wants x,y,w,h in model pixels (160x120)\n");
+                return 2;
+            }
+            options.masks.push_back(m);
+        } else if (a == "--mask-hud") {
+            options.masks.insert(options.masks.end(), kHudMasks.begin(), kHudMasks.end());
+        } else if (a == "--overlay") {
+            options.overlay_port = has_value && std::isdigit(static_cast<unsigned char>(argv[i + 1][0])) ? std::atoi(argv[++i]) : kDefaultOverlayPort;
+        } else if (a == "--overlay-dir" && has_value) {
+            options.overlay_dir = argv[++i];
         } else {
             std::fprintf(stderr, "unknown option %s\n", a.c_str());
             return 2;
         }
+    }
+    if (options.overlay_port > 0 && options.overlay_dir.empty()) {
+        const auto page = find_up(kOverlayPage);
+        if (page.empty()) {
+            std::fprintf(stderr, "%s not found, pass --overlay-dir\n", kOverlayPage);
+            return 1;
+        }
+        options.overlay_dir = page.parent_path().string();
     }
     const auto hwnd = find_window(options.window_prefix);
     if (!hwnd) {
         std::fprintf(stderr, "no window starting with the given title\n");
         return 1;
     }
-    Player player(*hwnd, options);
+    std::unique_ptr<Player> owned;
+    try {
+        owned = std::make_unique<Player>(*hwnd, options);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "%s\n", e.what());
+        return 1;
+    }
+    Player& player = *owned;
+    if (options.overlay_port > 0) std::printf("overlay: http://127.0.0.1:%d/ (add it as an OBS browser source)\n", options.overlay_port);
     constexpr int kToggle = 1, kStop = 2;
     RegisterHotKey(nullptr, kToggle, MOD_NOREPEAT, VK_F8);
     RegisterHotKey(nullptr, kStop, MOD_NOREPEAT, VK_F9);
@@ -314,6 +351,6 @@ int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "capture") {
         return capture(std::wstring(argv[2], argv[2] + std::string(argv[2]).size()), std::atoi(argv[3]), argc > 4 ? argv[4] : nullptr);
     }
-    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play [model.onnx] [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS]\n");
+    std::fprintf(stderr, "usage: runner verify <model.onnx> <fixture dir> [cpu|cuda]\n       runner shader-test <dir>\n       runner capture <title prefix> <seconds> [out.pgm]\n       runner play [model.onnx] [--window P] [--no-inject] [--cpu] [--start-now] [--duration S] [--keys zx] [--log-dir D] [--latency-extra MS] [--mask x,y,w,h] [--mask-hud] [--overlay [PORT]] [--overlay-dir D]\n");
     return 2;
 }

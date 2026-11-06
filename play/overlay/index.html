@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>osu-auto overlay</title>
+<style>
+  :root {
+    --surface: rgba(26, 26, 25, 0.9);
+    --inset: #0d0d0d;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --press: #3987e5;
+    --hold: #d95926;
+    --live: #199e70;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; }
+  body {
+    font: 14px/1.35 "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+    zoom: var(--zoom, 1);
+  }
+  .panel { width: 520px; display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+  .card { background: var(--surface); border-radius: 14px; padding: 12px 14px; }
+  .head { display: flex; align-items: center; justify-content: space-between; }
+  .title { font-weight: 600; letter-spacing: 0.02em; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .pill { border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; background: var(--grid); color: var(--ink-2); }
+  .pill.live { background: var(--live); color: #fff; }
+  .view { position: relative; width: 100%; aspect-ratio: 4 / 3; margin: 10px 0 4px; border-radius: 10px; overflow: hidden; background: var(--inset); }
+  .view canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #frame { image-rendering: pixelated; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .label { width: 112px; color: var(--ink-2); font-size: 13px; }
+  .bar { flex: 1; height: 12px; border-radius: 6px; background: var(--grid); position: relative; overflow: hidden; }
+  .bar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; width: 0; }
+  .bar > b { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--axis); }
+  .value { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+  #chart { width: 100%; aspect-ratio: 984 / 240; display: block; }
+  .keys { display: flex; gap: 10px; align-items: stretch; }
+  .key { flex: 1; border-radius: 12px; background: var(--grid); padding: 10px 0 8px; text-align: center; transition: background 40ms, color 40ms; }
+  .key .name { font-size: 22px; font-weight: 700; text-transform: uppercase; }
+  .key .count { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 13px; }
+  .key.down { background: var(--ink); color: #0b0b0b; }
+  .key.down .count { color: #52514e; }
+  .key.total { background: transparent; border: 2px solid var(--grid); }
+  .stats { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .stats span b { color: var(--ink-2); font-weight: 600; }
+  .about { font-size: 12px; color: var(--ink-2); }
+  .about-title { font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+  .about ul { margin: 0; padding-left: 18px; }
+  .about li { margin: 2px 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="card">
+    <div class="head">
+      <div>
+        <div class="title">osu-auto · what the AI sees</div>
+        <div class="sub">160x120 grayscale input, glow = where its aim attention is</div>
+      </div>
+      <div class="pill" id="status">offline</div>
+    </div>
+    <div class="view">
+      <canvas id="frame" width="160" height="120"></canvas>
+      <canvas id="heat" width="480" height="360"></canvas>
+    </div>
+    <div class="row" id="aim-row">
+      <div class="label">aim confidence</div>
+      <div class="bar"><i id="aim-bar" style="background: var(--ink-2)"></i></div>
+      <div class="value" id="aim-val">0.00</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="legend">
+      <span><i class="swatch" style="background: var(--press)"></i>click: hit a circle now</span>
+      <span><i class="swatch" style="background: var(--hold)"></i>hold: keep the key down (sliders, spinners)</span>
+    </div>
+    <canvas id="chart" width="984" height="240"></canvas>
+    <div class="row">
+      <div class="label">click</div>
+      <div class="bar"><i id="press-bar" style="background: var(--press)"></i><b></b></div>
+      <div class="value" id="press-val">0.00</div>
+    </div>
+    <div class="row">
+      <div class="label">hold</div>
+      <div class="bar"><i id="hold-bar" style="background: var(--hold)"></i><b></b></div>
+      <div class="value" id="hold-val">0.00</div>
+    </div>
+  </div>
+
+  <div class="card" id="keys-card">
+    <div class="keys">
+      <div class="key" id="k1"><div class="name" id="k1-name">z</div><div class="count" id="k1-count">0</div></div>
+      <div class="key" id="k2"><div class="name" id="k2-name">x</div><div class="count" id="k2-count">0</div></div>
+      <div class="key total"><div class="name" id="total">0</div><div class="count">presses</div></div>
+    </div>
+  </div>
+
+  <div class="card stats" id="stats-card">
+    <span>loop <b>100 Hz</b></span>
+    <span>inference <b id="infer">-</b></span>
+    <span>frame age <b id="age">-</b></span>
+    <span>capture <b id="fps">-</b></span>
+  </div>
+
+  <div class="card about" id="about-card">
+    <div class="about-title">How it was trained</div>
+    <ul>
+      <li>Learned by imitating osu!'s autoplay, from pixels only</li>
+      <li>86 ranked difficulties (5.0 to 7.9★, AR 8 to 10, CS 3 to 5.5) + 96 generated maps</li>
+      <li>No mods in training, one skin</li>
+      <li>It only sees the screen, shrunk down to the image above</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+if (params.has("scale")) document.body.style.setProperty("--zoom", params.get("scale"));
+for (const part of (params.get("hide") || "").split(",").filter(Boolean)) {
+  const el = document.getElementById(part + "-card");
+  if (el) el.hidden = true;
+}
+
+const HISTORY_S = 3;
+const KEY_FLASH_MS = 70;
+const $ = (id) => document.getElementById(id);
+const css = getComputedStyle(document.documentElement);
+const color = (name) => css.getPropertyValue(name).trim();
+
+const frameCtx = $("frame").getContext("2d");
+const frameImage = frameCtx.createImageData(160, 120);
+const heatCtx = $("heat").getContext("2d");
+const heatSmall = document.createElement("canvas");
+const heatSmallCtx = heatSmall.getContext("2d");
+const chartCtx = $("chart").getContext("2d");
+
+// sequential blue ramp (steps 600 -> 100), brighter = more attention
+const RAMP = ["#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4", "#cde2fb"].map((h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)));
+function ramp(t) {
+  const x = Math.min(Math.max(t, 0), 1) * (RAMP.length - 1);
+  const i = Math.min(Math.floor(x), RAMP.length - 2), f = x - i;
+  return RAMP[i].map((c, k) => c + (RAMP[i + 1][k] - c) * f);
+}
+
+let latest = null, lastMessage = 0;
+const history = [];
+const flash = { k1: 0, k2: 0 };
+let lastCounts = { k1: 0, k2: 0 };
+
+function bytes(b64) {
+  const s = atob(b64);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; ++i) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+function connect() {
+  const events = new EventSource("/events");
+  events.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    const now = performance.now();
+    m.frameBytes = bytes(m.frame);
+    m.att = m.aw > 0 ? new Float32Array(bytes(m.attention).buffer) : null;
+    if (m.k1_presses > lastCounts.k1) flash.k1 = now;
+    if (m.k2_presses > lastCounts.k2) flash.k2 = now;
+    lastCounts = { k1: m.k1_presses, k2: m.k2_presses };
+    if (m.active) history.push({ t: now, press: m.p_press, hold: m.p_down });
+    latest = m;
+    lastMessage = now;
+  };
+}
+
+function aimConfidence(att, w, h) {
+  let best = 0;
+  for (let i = 1; i < att.length; ++i) if (att[i] > att[best]) best = i;
+  const bx = best % w, by = Math.floor(best / w);
+  let mass = 0;
+  for (let y = by - 1; y <= by + 1; ++y)
+    for (let x = bx - 1; x <= bx + 1; ++x)
+      if (x >= 0 && y >= 0 && x < w && y < h) mass += att[y * w + x];
+  return mass;
+}
+
+function drawView(m) {
+  const px = frameImage.data;
+  for (let i = 0; i < m.frameBytes.length; ++i) {
+    const v = m.frameBytes[i];
+    px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = v;
+    px[i * 4 + 3] = 255;
+  }
+  frameCtx.putImageData(frameImage, 0, 0);
+
+  const W = heatCtx.canvas.width, H = heatCtx.canvas.height;
+  heatCtx.clearRect(0, 0, W, H);
+  if (m.att) {
+    heatSmall.width = m.aw;
+    heatSmall.height = m.ah;
+    const img = heatSmallCtx.createImageData(m.aw, m.ah);
+    let peak = 0;
+    for (const v of m.att) peak = Math.max(peak, v);
+    for (let i = 0; i < m.att.length; ++i) {
+      const t = peak > 0 ? Math.pow(m.att[i] / peak, 0.6) : 0;
+      const [r, g, b] = ramp(t);
+      img.data.set([r, g, b, Math.round(t * 200)], i * 4);
+    }
+    heatSmallCtx.putImageData(img, 0, 0);
+    heatCtx.imageSmoothingEnabled = true;
+    heatCtx.imageSmoothingQuality = "high";
+    heatCtx.drawImage(heatSmall, 0, 0, W, H);
+    const conf = aimConfidence(m.att, m.aw, m.ah);
+    $("aim-bar").style.width = (conf * 100).toFixed(1) + "%";
+    $("aim-val").textContent = conf.toFixed(2);
+  }
+  $("aim-row").hidden = !m.att;
+
+  const x = m.x * W, y = m.y * H;
+  heatCtx.lineWidth = 4;
+  heatCtx.strokeStyle = "rgba(13,13,13,0.9)";
+  heatCtx.beginPath(); heatCtx.arc(x, y, 9, 0, Math.PI * 2); heatCtx.stroke();
+  heatCtx.lineWidth = 2;
+  heatCtx.strokeStyle = m.k1 || m.k2 ? color("--ink") : color("--ink-2");
+  heatCtx.beginPath(); heatCtx.arc(x, y, 9, 0, Math.PI * 2); heatCtx.stroke();
+  if (m.k1 || m.k2) {
+    heatCtx.fillStyle = color("--ink");
+    heatCtx.beginPath(); heatCtx.arc(x, y, 4, 0, Math.PI * 2); heatCtx.fill();
+  }
+}
+
+function drawChart(now) {
+  const c = chartCtx, W = c.canvas.width, H = c.canvas.height;
+  const padR = 120, padT = 10, padB = 10, plotW = W - padR, plotH = H - padT - padB;
+  while (history.length && history[0].t < now - HISTORY_S * 1000) history.shift();
+  c.clearRect(0, 0, W, H);
+  const yOf = (v) => padT + (1 - v) * plotH;
+  const xOf = (t) => plotW - ((now - t) / (HISTORY_S * 1000)) * plotW;
+
+  c.strokeStyle = color("--grid"); c.lineWidth = 2;
+  for (const v of [0, 1]) { c.beginPath(); c.moveTo(0, yOf(v)); c.lineTo(plotW, yOf(v)); c.stroke(); }
+  c.setLineDash([8, 8]); c.strokeStyle = color("--axis");
+  c.beginPath(); c.moveTo(0, yOf(0.5)); c.lineTo(plotW, yOf(0.5)); c.stroke();
+  c.setLineDash([]);
+  c.fillStyle = color("--muted"); c.font = "22px Segoe UI, sans-serif"; c.textBaseline = "middle";
+  c.fillText("0.5", plotW + 12, yOf(0.5));
+
+  const series = [["press", "--press"], ["hold", "--hold"]];
+  for (const [key, name] of series) {
+    c.strokeStyle = color(name); c.lineWidth = 4; c.lineJoin = "round"; c.lineCap = "round";
+    c.beginPath();
+    history.forEach((p, i) => (i ? c.lineTo(xOf(p.t), yOf(p[key])) : c.moveTo(xOf(p.t), yOf(p[key]))));
+    c.stroke();
+  }
+  const last = history[history.length - 1];
+  if (last) {
+    const gap = 26, top = 12, bottom = H - 12;
+    const [a, b] = series.map(([key]) => ({ key, y: yOf(last[key]) })).sort((p, q) => p.y - q.y);
+    if (b.y - a.y < gap) { const mid = (a.y + b.y) / 2; a.y = mid - gap / 2; b.y = mid + gap / 2; }
+    if (a.y < top) { a.y = top; b.y = Math.max(b.y, top + gap); }
+    if (b.y > bottom) { b.y = bottom; a.y = Math.min(a.y, bottom - gap); }
+    c.fillStyle = color("--ink-2"); c.font = "22px Segoe UI, sans-serif";
+    for (const l of [a, b]) c.fillText(`${l.key === "press" ? "click" : l.key} ${last[l.key].toFixed(2)}`, plotW + 12, l.y);
+  }
+}
+
+function setBar(id, v) {
+  $(id + "-bar").style.width = (v * 100).toFixed(1) + "%";
+  $(id + "-val").textContent = v.toFixed(2);
+}
+
+function frame() {
+  const now = performance.now();
+  const m = latest;
+  const online = m && now - lastMessage < 1000;
+  const status = $("status");
+  status.textContent = !online ? "offline" : !m.active ? "paused" : !m.focused ? "game not focused" : "live";
+  status.className = "pill" + (online && m.active && m.focused ? " live" : "");
+  if (m) {
+    drawView(m);
+    setBar("press", m.p_press);
+    setBar("hold", m.p_down);
+    $("k1-name").textContent = m.key_names[0];
+    $("k2-name").textContent = m.key_names[1];
+    $("k1-count").textContent = m.k1_presses;
+    $("k2-count").textContent = m.k2_presses;
+    $("total").textContent = m.k1_presses + m.k2_presses;
+    $("k1").classList.toggle("down", !!m.k1 || now - flash.k1 < KEY_FLASH_MS);
+    $("k2").classList.toggle("down", !!m.k2 || now - flash.k2 < KEY_FLASH_MS);
+    $("infer").textContent = m.infer_ms.toFixed(1) + " ms";
+    $("age").textContent = m.frame_age_ms.toFixed(1) + " ms";
+    $("fps").textContent = m.capture_fps + " fps";
+  }
+  drawChart(now);
+  requestAnimationFrame(frame);
+}
+
+connect();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -19,3 +19,6 @@ Crop capture_box(int client_w, int client_h, int offset_x, int offset_y);
 
 // Playfield units (512x384) to screen pixels, from the client size like PlayArea.playfield_to_window
 std::pair<double, double> playfield_to_screen(const WindowGeometry& g, double px, double py);
+
+// Playfield units to fractions of the 4:3 capture box, which is also the model's view
+std::pair<double, double> playfield_to_box(double px, double py);

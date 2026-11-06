@@ -21,6 +21,7 @@
 #include "meta.h"
 #include "model.h"
 #include "npz.h"
+#include "overlay.h"
 #include "post.h"
 #include "wgc_source.h"
 #include "window.h"
@@ -88,6 +89,8 @@ struct Player::Impl {
     FrameRing ring;
     std::unique_ptr<FrameSource> source;
     std::unique_ptr<Model> model;
+    std::unique_ptr<OverlayServer> overlay;
+    OverlaySnapshot snapshot;
     Injector injector;
     std::array<uint16_t, 2> scans;
 
@@ -116,6 +119,7 @@ struct Player::Impl {
         std::filesystem::create_directories(options.log_dir);
         log.open(options.log_dir + "/play-" + stamp() + ".jsonl", std::ios::app);
 
+        ring.set_masks(options.masks);
         SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
         model = std::make_unique<Model>(options.model, meta, options.cuda);
         if (options.hook) {
@@ -134,6 +138,9 @@ struct Player::Impl {
                       json_escape(options.model).c_str(), json_escape(title).c_str(), g.client_x, g.client_y, g.client_w, g.client_h,
                       options.latency_extra_ms, meta.latency_max_ms);
         event("init", buf);
+        snapshot.key_names[0] = options.keys[0];
+        snapshot.key_names[1] = options.keys[1];
+        if (options.overlay_port > 0) overlay = std::make_unique<OverlayServer>(options.overlay_port, options.overlay_dir);
         loop = std::thread([this] { run(); });
     }
 
@@ -153,6 +160,8 @@ struct Player::Impl {
     void start() {
         std::lock_guard lock(tick_mutex);
         keys = KeyExecutor(2, 0.5, 1.0);
+        snapshot.k1_presses = snapshot.k2_presses = 0;
+        snapshot.k1 = snapshot.k2 = false;
         trace.clear();
         trace_path = options.log_dir + "/play-" + stamp() + "-trace.npz";
         {
@@ -160,6 +169,7 @@ struct Player::Impl {
             stats = PlayStats{};
         }
         active = true;
+        if (overlay) overlay->set_active(true);
         char title[256]{};
         GetWindowTextA(hwnd, title, sizeof(title));
         event("start", std::string("\"window\": \"") + json_escape(title) + "\"");
@@ -169,6 +179,7 @@ struct Player::Impl {
         if (!active.exchange(false)) return;
         std::lock_guard lock(tick_mutex);
         release_held();
+        if (overlay) overlay->set_active(false);
         long long presses, ticks;
         {
             std::lock_guard stats_lock(stats_mutex);
@@ -302,8 +313,38 @@ struct Player::Impl {
             stats.latency_ms = latency_ms;
             stats.focused = focused;
         }
+        if (overlay) publish(px, py, p_press, p_down, k, focused, *age * 1000, infer_ms, latency_ms);
         const double row[kTraceColumns] = {t_start, px, py, p_press, p_down, static_cast<double>(k.k1), static_cast<double>(k.k2), *age * 1000, infer_ms};
         trace.insert(trace.end(), row, row + kTraceColumns);
+    }
+
+    void publish(double px, double py, double p_press, double p_down, Keys k, bool focused, double frame_age_ms, double infer_ms, double latency_ms) {
+        const auto [bx, by] = playfield_to_box(px, py);
+        snapshot.active = true;
+        snapshot.focused = focused;
+        snapshot.box_x = bx;
+        snapshot.box_y = by;
+        snapshot.p_press = p_press;
+        snapshot.p_down = p_down;
+        snapshot.k1_presses += k.k1 && !snapshot.k1;
+        snapshot.k2_presses += k.k2 && !snapshot.k2;
+        snapshot.k1 = k.k1;
+        snapshot.k2 = k.k2;
+        snapshot.frame_age_ms = frame_age_ms;
+        snapshot.infer_ms = infer_ms;
+        snapshot.latency_ms = latency_ms;
+        snapshot.capture_fps = source->fps();
+        {
+            std::lock_guard lock(stats_mutex);
+            snapshot.presses = stats.presses;
+        }
+        const float* newest = model->frames() + (steps.size() - 1) * snapshot.frame.size();
+        for (size_t i = 0; i < snapshot.frame.size(); ++i) snapshot.frame[i] = static_cast<uint8_t>(std::lround(newest[i] * 255.0f));
+        const AttentionShape shape = model->attention_shape();
+        snapshot.attention_h = shape.h;
+        snapshot.attention_w = shape.w;
+        snapshot.attention = model->attention();
+        overlay->publish(snapshot);
     }
 };
 

@@ -2,6 +2,7 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <string>
@@ -11,6 +12,10 @@
 
 struct ModelOutput {
     double x, y, press_logit, down_logit;
+};
+
+struct AttentionShape {
+    int h = 0, w = 0;
 };
 
 class Model {
@@ -26,6 +31,12 @@ public:
         }
         const std::wstring wide(onnx_path.begin(), onnx_path.end());
         session_ = Ort::Session(env_, wide.c_str(), options_);
+        if (session_.GetOutputCount() > 1) {
+            const auto shape = session_.GetOutputTypeInfo(1).GetTensorTypeAndShapeInfo().GetShape();
+            attention_shape_ = {static_cast<int>(shape[shape.size() - 2]), static_cast<int>(shape[shape.size() - 1])};
+            attention_.resize(static_cast<size_t>(attention_shape_.h) * attention_shape_.w);
+            output_count_ = 2;
+        }
 
         const auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         inputs_[0] = Ort::Value::CreateTensor<float>(memory, frames_.data(), frames_.size(), frames_shape_.data(), frames_shape_.size());
@@ -35,13 +46,22 @@ public:
 
     // The caller fills this before run()
     float* frames() { return frames_.data(); }
+    const float* frames() const { return frames_.data(); }
+
+    // Softmax over the aim cells from the last run(), empty when the model has no attention output
+    const std::vector<float>& attention() const { return attention_; }
+    AttentionShape attention_shape() const { return attention_shape_; }
 
     ModelOutput run(float latency_aux, double* ms = nullptr) {
         aux_[0] = latency_aux;
         const auto t0 = std::chrono::steady_clock::now();
-        auto out = session_.Run(Ort::RunOptions{nullptr}, input_names_, inputs_, 2, output_names_, 1);
+        auto out = session_.Run(Ort::RunOptions{nullptr}, input_names_, inputs_, 2, output_names_, output_count_);
         if (ms) *ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         const float* o = out[0].GetTensorData<float>();
+        if (output_count_ > 1) {
+            const float* a = out[1].GetTensorData<float>();
+            std::copy(a, a + attention_.size(), attention_.begin());
+        }
         return {o[0], o[1], o[2], o[3]};
     }
 
@@ -55,5 +75,8 @@ private:
     std::array<int64_t, 2> aux_shape_{1, 2};
     Ort::Value inputs_[2] = {Ort::Value(nullptr), Ort::Value(nullptr)};
     const char* input_names_[2] = {"frames", "aux"};
-    const char* output_names_[1] = {"out"};
+    const char* output_names_[2] = {"out", "attention"};
+    size_t output_count_ = 1;
+    std::vector<float> attention_;
+    AttentionShape attention_shape_;
 };

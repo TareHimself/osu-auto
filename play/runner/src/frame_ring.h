@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <deque>
@@ -29,6 +30,11 @@ inline double now_seconds() {
     return qpc_to_seconds(c.QuadPart);
 }
 
+// A rectangle in model-input pixels that is painted black before anything reads the frame
+struct MaskRect {
+    int x, y, w, h;
+};
+
 struct TimedFrame {
     double t;
     GrayFrame pixels;
@@ -36,10 +42,19 @@ struct TimedFrame {
 
 class FrameRing {
 public:
+    // Call before any frame is pushed
+    void set_masks(std::vector<MaskRect> masks) { masks_ = std::move(masks); }
+
     void push(double t, const GrayFrame& pixels) {
         std::lock_guard lock(mutex_);
         if (items_.size() == kMax) items_.pop_front();
         items_.push_back({t, pixels});
+        for (const MaskRect& m : masks_) {
+            for (int y = std::max(m.y, 0); y < std::min(m.y + m.h, kFrameH); ++y) {
+                const int x0 = std::max(m.x, 0), x1 = std::min(m.x + m.w, kFrameW);
+                if (x1 > x0) std::fill_n(items_.back().pixels.begin() + y * kFrameW + x0, x1 - x0, uint8_t{0});
+            }
+        }
         ++count_;
     }
 
@@ -77,6 +92,7 @@ public:
 
 private:
     static constexpr size_t kMax = 128;
+    std::vector<MaskRect> masks_;
     mutable std::mutex mutex_;
     std::deque<TimedFrame> items_;
     uint64_t count_ = 0;

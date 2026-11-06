@@ -5,10 +5,10 @@ find_package(onnxruntime REQUIRED)
 find_package(cudnn REQUIRED)
 find_package(libcublas REQUIRED)
 
-add_executable(runner src/main.cpp src/processor.cpp src/window.cpp src/wgc_source.cpp src/player.cpp src/hook_source.cpp src/hook_inject.cpp)
+add_executable(runner src/main.cpp src/processor.cpp src/window.cpp src/wgc_source.cpp src/player.cpp src/hook_source.cpp src/hook_inject.cpp src/overlay.cpp)
 target_compile_features(runner PRIVATE cxx_std_20)
 target_compile_definitions(runner PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
-target_link_libraries(runner PRIVATE onnxruntime::onnxruntime d3d11 dxgi d3dcompiler dwmapi windowsapp)
+target_link_libraries(runner PRIVATE onnxruntime::onnxruntime d3d11 dxgi d3dcompiler dwmapi windowsapp ws2_32)
 install(TARGETS runner RUNTIME DESTINATION bin)
 
 add_library(capture_hook SHARED src/hook.cpp src/processor.cpp src/window.cpp)

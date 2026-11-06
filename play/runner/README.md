@@ -4,7 +4,8 @@ The C++ code of the native runner: capture, ONNX inference, input and the Presen
 
 ```
 src/               main.cpp (commands), player.cpp (100 Hz loop), processor.cpp (GPU gray and downsample),
-                   wgc_source.cpp, hook.cpp (capture_hook.dll), hook_source.cpp, hook_inject.cpp, post.h, model.h
+                   wgc_source.cpp, hook.cpp (capture_hook.dll), hook_source.cpp, hook_inject.cpp, post.h, model.h,
+                   overlay.cpp (stream overlay server)
 recipes/           local silo recipes: onnxruntime, cudnn, libcublas (prebuilt NVIDIA and Microsoft binaries)
 silopkg.py         the silo package: dependencies and the CMake build
 CMakeLists.txt     two targets, runner and capture_hook
