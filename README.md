@@ -8,7 +8,7 @@ A rebuild of osu-ai on osu!lazer. The old project lives on the [legacy](https://
 
 [![osu-auto showcase](https://img.youtube.com/vi/tFMnvKfLdYs/maxresdefault.jpg)](https://www.youtube.com/watch?v=tFMnvKfLdYs)
 
-Full runs of `joint_v4` on maps it never trained on, nomod and DT (no mods in training), up to Galaxy Collapse [Galactic] at 19.76★ with DT, which it fails. The panel on the left is the [stream overlay](play/README.md#stream-overlay): the model's input, its aim attention and its click decisions.
+[Watch the showcase on YouTube](https://www.youtube.com/watch?v=tFMnvKfLdYs). Full runs of `joint_v4` on maps it never trained on, nomod and DT (no mods in training), up to Galaxy Collapse [Galactic] at 19.76★ with DT, which it fails. The panel on the left is the [stream overlay](play/README.md#stream-overlay): the model's input, its aim attention and its click decisions.
 
 ## Results
 
